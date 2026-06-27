@@ -7,3 +7,4 @@ dist/
 models/
 .ruff_cache/
 .pytest_cache/
+.DS_Store
