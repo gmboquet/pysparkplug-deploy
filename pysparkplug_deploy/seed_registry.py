@@ -14,7 +14,7 @@ import os
 
 import numpy as np
 
-from pysp.inference import ModelRegistry, fit_with_provenance
+from pysp.inference.production import Registry, fit_with_provenance
 from pysp.stats import GaussianDistribution
 
 ROOT = os.environ.get("PYSP_REGISTRY_ROOT", "./models")
@@ -25,7 +25,7 @@ def main() -> None:
     data = np.random.RandomState(0).normal(3.0, 2.0, 2000).tolist()
     model, header = fit_with_provenance(data, GaussianDistribution(0.0, 1.0).estimator(), max_its=50)
 
-    registry = ModelRegistry(ROOT)
+    registry = Registry(ROOT)
     version = registry.register(model, NAME)
     registry.promote(NAME, version, alias="production")
 

@@ -1,6 +1,6 @@
-"""FastAPI serving layer for a pysparkplug model -- a thin HTTP wrapper over ``pysp.inference.ModelService``.
+"""FastAPI serving layer for a pysparkplug model -- a thin HTTP wrapper over ``pysp.inference.production.Service``.
 
-It loads the model an alias points at in a :class:`~pysp.inference.ModelRegistry` (a shared volume / object
+It loads the model an alias points at in a :class:`~pysp.inference.production.Registry` (a shared volume / object
 store) and exposes it over HTTP: scoring, health (for Kubernetes probes), provenance, and drift checks.
 
 It is *stateless*: every replica loads the same model from the shared registry, so scaling is horizontal
@@ -27,7 +27,7 @@ from typing import Any
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 
-from pysp.inference import ModelRegistry, ModelService
+from pysp.inference.production import Registry, Service
 
 REGISTRY_ROOT = os.environ.get("PYSP_REGISTRY_ROOT", "/models")
 MODEL_NAME = os.environ.get("PYSP_MODEL_NAME", "model")
@@ -50,16 +50,16 @@ def _load_reference() -> list[Any] | None:
         return _records(json.load(fh))
 
 
-def _load_service() -> ModelService:
-    registry = ModelRegistry(REGISTRY_ROOT)
-    svc = ModelService.from_registry(
+def _load_service() -> Service:
+    registry = Registry(REGISTRY_ROOT)
+    svc = Service.from_registry(
         registry, MODEL_NAME, alias=MODEL_ALIAS, reference=_load_reference(), log_path=ACTIVITY_LOG
     )
     _state["service"] = svc
     return svc
 
 
-def _service() -> ModelService:
+def _service() -> Service:
     svc = _state.get("service")
     if svc is None:
         raise HTTPException(status_code=503, detail="model not loaded")
@@ -92,7 +92,7 @@ def health() -> dict:
 def info() -> dict:
     """The served model's provenance header (config, data hash, training, env)."""
     svc = _service()
-    header = svc.header  # a ModelHeader (direct) or a plain dict (loaded from the registry)
+    header = svc.header  # a Header (direct) or a plain dict (loaded from the registry)
     return {
         "model": MODEL_NAME,
         "alias": MODEL_ALIAS,

@@ -16,7 +16,7 @@ import os
 
 import numpy as np
 
-from pysp.inference import ModelRegistry, detect_drift, fit_with_provenance
+from pysp.inference.production import Registry, detect_drift, fit_with_provenance
 from pysp.stats import GaussianDistribution
 
 ROOT = os.environ.get("PYSP_REGISTRY_ROOT", "./models")
@@ -34,7 +34,7 @@ def _recent_batch() -> list:
 
 
 def main() -> None:
-    registry = ModelRegistry(ROOT)
+    registry = Registry(ROOT)
     model, _header = registry.current(NAME, "production")
     ref_path = os.path.join(ROOT, NAME, "reference.json")
     with open(ref_path) as fh:
