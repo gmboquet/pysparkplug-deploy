@@ -16,7 +16,7 @@ from mixle_mlops.engines import (
 )
 from mixle_mlops.engines.decode import _softmax
 from mixle_mlops.engines.providers import CharProvider
-from mixle_mlops.models.local_engine import LocalEngineAdapter
+from mixle_mlops.models.local_engine import LocalEngineAdapter, SpeculativeAdapter
 
 
 def test_fuse_logprobs_matches_mixle_product_of_experts():
@@ -121,6 +121,17 @@ def test_speculative_with_real_transformers():
     spec = speculative_decode(provider, provider, prompt_ids=[1, 2], max_new_tokens=6, k=3, greedy=True)
     plain = decode(provider, prompt_ids=[1, 2], max_new_tokens=6, greedy=True)
     assert spec == plain
+
+
+def test_speculative_adapter_is_lossless_vs_target():
+    rng = np.random.default_rng(2)
+    draft = CharProvider("abcd", table=rng.normal(size=(4, 4)))   # a different (cheap) model
+    target = CharProvider("abcd", table=rng.normal(size=(4, 4)))
+    spec = SpeculativeAdapter("fast", draft, target, k=3, max_new_tokens=6)
+    plain = LocalEngineAdapter("t", target, max_new_tokens=6)
+    req = ChatRequest(model="x", messages=[ChatMessage(role="user", content="a")])
+    assert asyncio.run(spec.chat(req)).choices[0].message.text() == \
+        asyncio.run(plain.chat(req)).choices[0].message.text()    # served speculatively == the target alone
 
 
 @pytest.fixture

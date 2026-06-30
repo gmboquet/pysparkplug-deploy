@@ -63,13 +63,17 @@ def build_registry(settings: Settings) -> ModelRegistry:
             pass
     if settings.local_model or len(settings.local_poe_models) >= 2:   # local logit-level engine (PoE + grammar)
         try:
-            from ..models.local_engine import load_local_engine
+            from ..models.local_engine import load_local_engine, load_speculative_engine
             if settings.local_model:
                 registry.register(load_local_engine("local", [settings.local_model],
                                                     max_new_tokens=settings.local_max_tokens))
             if len(settings.local_poe_models) >= 2:
                 registry.register(load_local_engine("local-poe", settings.local_poe_models,
                                                     max_new_tokens=settings.local_max_tokens))
+            if settings.local_draft_model and settings.local_model:   # speculative-decoding fast model
+                registry.register(load_speculative_engine("local-fast", settings.local_draft_model,
+                                                          settings.local_model, k=settings.local_spec_k,
+                                                          max_new_tokens=settings.local_max_tokens))
         except Exception:                                            # never let model loading break startup
             pass
     return registry

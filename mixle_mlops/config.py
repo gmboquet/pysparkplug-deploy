@@ -38,6 +38,8 @@ class Settings(BaseSettings):
     # --- local logit-level engine (token-level PoE + grammar masking via transformers; needs the `local` extra) ---
     local_model: str = ""                            # a transformers model id to host through the decode engine
     local_poe_models: list[str] = []                 # 2+ model ids -> a token-level Product-of-Experts ensemble
+    local_draft_model: str = ""                      # a small draft model -> speculative decoding of local_model (shared tokenizer)
+    local_spec_k: int = 4
     local_max_tokens: int = 128
 
     # --- self-evolution ---
