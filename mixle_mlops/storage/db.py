@@ -21,8 +21,12 @@ def get_engine():
 
 
 def init_db() -> None:
-    from ..accounts import models as _accounts  # noqa: F401  (register tables)
+    # import every module that declares SQLModel tables so create_all registers them
+    from ..accounts import models as _accounts  # noqa: F401
+    from ..conversations import models as _conversations  # noqa: F401
+    from ..datasets import models as _datasets  # noqa: F401
     from ..feedback import models as _feedback  # noqa: F401
+    from ..rag import models as _rag  # noqa: F401
     SQLModel.metadata.create_all(get_engine())
 
 

@@ -26,6 +26,10 @@ def main(argv: list[str] | None = None) -> None:
     cu.add_argument("email")
     cu.add_argument("password")
     cu.add_argument("--admin", action="store_true")
+    ic = sub.add_parser("init-cloud", help="scaffold a provider-correct .env (object store + DB + redis)")
+    ic.add_argument("provider", choices=["aws", "azure", "gcp", "alicloud", "local"])
+    ic.add_argument("--dest", default=".env")
+    ic.add_argument("--force", action="store_true", help="overwrite an existing .env")
     args = parser.parse_args(argv)
 
     if args.cmd == "serve":
@@ -47,3 +51,9 @@ def main(argv: list[str] | None = None) -> None:
             _key, raw = service.create_api_key(session, user)
             print(f"user {user.email} created")
             print(f"api key: {raw}")
+    elif args.cmd == "init-cloud":
+        from .cloud_init import init_cloud, next_steps
+
+        path = init_cloud(args.provider, dest=args.dest, overwrite=args.force)
+        print(f"wrote {path}")
+        print(next_steps(args.provider))

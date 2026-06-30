@@ -14,7 +14,7 @@ from mixle_mlops.core.decision import bayes_action
 from mixle_mlops.core.predictive import predictive_batch
 from mixle_mlops.gateway.app import create_app
 from mixle_mlops.gateway.routes import mixle as mixle_routes
-from mixle_mlops.models.mixle_model import MixleAdapter, register_demo_mixle_model
+from mixle_mlops.models.mixle_model import register_demo_mixle_model
 
 
 @pytest.fixture

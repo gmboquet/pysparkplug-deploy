@@ -1,0 +1,19 @@
+mixle-mlops is installed as release {{ .Release.Name }}.
+
+Gateway service: {{ include "mixle-mlops.fullname" . }} (port {{ .Values.service.port }})
+{{- if .Values.ingress.enabled }}
+Ingress hosts:
+{{- range .Values.ingress.hosts }}
+  http{{ if $.Values.ingress.tls }}s{{ end }}://{{ .host }}
+{{- end }}
+{{- else }}
+No ingress. Port-forward to try it:
+  kubectl port-forward svc/{{ include "mixle-mlops.fullname" . }} 8000:{{ .Values.service.port }}
+  curl localhost:8000/health
+{{- end }}
+
+Object store: {{ if .Values.objectStore.url }}{{ .Values.objectStore.url }}{{ else }}local PVC ({{ .Values.persistence.mountPath }}/objects){{ end }}
+Database:     {{ if .Values.database.url }}(external Postgres via Secret){{ else }}SQLite on PVC{{ end }}
+
+The SAME image + chart run on EKS / AKS / GKE / ACK. Switch clouds by changing only objectStore.url,
+database.url, and redis.url (see deploy/cloud/README.md).

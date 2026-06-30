@@ -11,7 +11,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from mixle_mlops.config import get_settings
-from mixle_mlops.feedback import collect, elicit, loop
+from mixle_mlops.feedback import elicit, loop
 from mixle_mlops.feedback.reward import fit_reward
 from mixle_mlops.gateway.app import create_app
 from mixle_mlops.gateway.routes import feedback as feedback_routes

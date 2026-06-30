@@ -19,7 +19,6 @@ from typing import Any, Iterable
 from sqlmodel import Session
 
 from . import collect, elicit
-from .models import Feedback
 from .reward import RewardModel, RewardItem
 
 

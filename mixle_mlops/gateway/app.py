@@ -9,10 +9,25 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from ..config import Settings, get_settings
 from ..core.registry import ModelRegistry
+from ..image_gen import register_demo_image_model
 from ..models import EchoAdapter, OpenAICompatAdapter
 from ..models.mixle_model import register_demo_mixle_model
 from ..storage.db import init_db
-from .routes import accounts, chat, feedback, files, mcp, mixle, models
+from .routes import (
+    accounts,
+    cache,
+    chat,
+    cloud,
+    conversations,
+    datasets,
+    feedback,
+    files,
+    images,
+    mcp,
+    mixle,
+    models,
+    rag,
+)
 
 
 def build_registry(settings: Settings) -> ModelRegistry:
@@ -21,10 +36,18 @@ def build_registry(settings: Settings) -> ModelRegistry:
     for model_id in settings.llm_models:                        # configured LLM backend models
         registry.register(OpenAICompatAdapter(model_id, base_url=settings.llm_base_url,
                                               api_key=settings.llm_api_key))
-    if settings.enable_demo_models:                             # a fitted mixle model demonstrating /v1/mixle
+    if settings.enable_demo_models:                             # demo models for /v1/mixle and /v1/images
+        for _register in (register_demo_mixle_model, register_demo_image_model):
+            try:
+                _register(registry)
+            except Exception:                                   # never let a demo registration break startup
+                pass
+    if settings.image_model and settings.image_base_url:        # a real image backend, if configured
         try:
-            register_demo_mixle_model(registry)
-        except Exception:                                       # never let a demo fit break startup
+            from ..image_gen import ImageGenAdapter
+            registry.register(ImageGenAdapter(settings.image_model, backend="openai",
+                                              base_url=settings.image_base_url, api_key=settings.image_api_key))
+        except Exception:
             pass
     return registry
 
@@ -59,6 +82,12 @@ def create_app() -> FastAPI:
     app.include_router(feedback.router, prefix="/v1", tags=["feedback"])  # /v1/feedback, /v1/rlhf/*
     app.include_router(files.router, prefix="/v1", tags=["files"])        # /v1/files (multimodal uploads)
     app.include_router(mcp.router, tags=["mcp"])                          # /mcp (JSON-RPC over HTTP)
+    app.include_router(rag.router, prefix="/v1", tags=["rag"])            # /v1/documents, /v1/rag/search
+    app.include_router(cache.router, prefix="/v1", tags=["cache"])        # /v1/cache/stats
+    app.include_router(conversations.router, prefix="/v1", tags=["conversations"])  # /v1/conversations (+ export)
+    app.include_router(images.router, prefix="/v1", tags=["images"])      # /v1/images/generations
+    app.include_router(datasets.router, prefix="/v1", tags=["datasets"])  # /v1/datasets/generate
+    app.include_router(cloud.router, prefix="/v1", tags=["cloud"])        # /v1/cloud/objectstore
     return app
 
 

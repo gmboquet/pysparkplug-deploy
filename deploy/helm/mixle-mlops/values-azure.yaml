@@ -1,0 +1,21 @@
+# Azure (AKS) overrides. Fill from `terraform -chdir=deploy/terraform/azure output`.
+replicaCount: 3
+serviceAccount:
+  annotations:
+    azure.workload.identity/client-id: "CHANGE-ME-client-id"   # AKS Workload Identity for Blob access
+podLabels:
+  azure.workload.identity/use: "true"
+objectStore:
+  url: "az://CHANGE-ME-container"
+  endpoint: "https://CHANGE-ME-account.blob.core.windows.net"
+database:
+  url: "postgresql+psycopg://mixle:CHANGE_ME@CHANGE-ME.postgres.database.azure.com:5432/mixle"
+redis:
+  url: "rediss://CHANGE-ME.redis.cache.windows.net:6380/0"
+ingress:
+  enabled: true
+  className: webapprouting.kubernetes.azure.com
+autoscaling:
+  enabled: true
+persistence:
+  enabled: false

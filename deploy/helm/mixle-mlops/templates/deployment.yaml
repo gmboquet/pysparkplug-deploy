@@ -1,0 +1,81 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "mixle-mlops.fullname" . }}
+  labels:
+    {{- include "mixle-mlops.labels" . | nindent 4 }}
+spec:
+  {{- if not .Values.autoscaling.enabled }}
+  replicas: {{ .Values.replicaCount }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "mixle-mlops.selectorLabels" . | nindent 6 }}
+  {{- if include "mixle-mlops.needsPVC" . }}
+  strategy:
+    type: Recreate            # RWO volume can't attach to two pods during a rolling update (local mode)
+  {{- end }}
+  template:
+    metadata:
+      labels:
+        {{- include "mixle-mlops.selectorLabels" . | nindent 8 }}
+        {{- with .Values.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+        {{- with .Values.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      serviceAccountName: {{ include "mixle-mlops.serviceAccountName" . }}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: gateway
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["mixle-serve"]
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.service.targetPort }}
+          envFrom:
+            - configMapRef:
+                name: {{ include "mixle-mlops.fullname" . }}-config
+            - secretRef:
+                name: {{ .Values.existingSecret | default (printf "%s-secret" (include "mixle-mlops.fullname" .)) }}
+            {{- if .Values.database.existingSecret }}
+            - secretRef:
+                name: {{ .Values.database.existingSecret }}
+            {{- end }}
+            {{- if .Values.redis.existingSecret }}
+            - secretRef:
+                name: {{ .Values.redis.existingSecret }}
+            {{- end }}
+          readinessProbe:
+            httpGet: { path: /health, port: http }
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: { path: /health, port: http }
+            initialDelaySeconds: 20
+            periodSeconds: 20
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          {{- if include "mixle-mlops.needsPVC" . }}
+          volumeMounts:
+            - name: data
+              mountPath: {{ .Values.persistence.mountPath }}
+          {{- end }}
+      {{- if include "mixle-mlops.needsPVC" . }}
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: {{ include "mixle-mlops.fullname" . }}-data
+      {{- end }}

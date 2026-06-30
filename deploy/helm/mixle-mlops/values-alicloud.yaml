@@ -1,0 +1,19 @@
+# Alibaba Cloud (ACK) overrides. Fill from `terraform -chdir=deploy/terraform/alicloud output`.
+replicaCount: 3
+serviceAccount:
+  annotations:
+    pod-identity.alibabacloud.com/role-name: "mixle-mlops"   # ACK RRSA for OSS access, no keys
+objectStore:
+  url: "oss://CHANGE-ME-bucket"
+  endpoint: "https://oss-cn-hangzhou.aliyuncs.com"
+database:
+  url: "postgresql+psycopg://mixle:CHANGE_ME@CHANGE-ME-rds-endpoint:5432/mixle"
+redis:
+  url: "redis://CHANGE-ME-kvstore-endpoint:6379/0"
+ingress:
+  enabled: true
+  className: alb
+autoscaling:
+  enabled: true
+persistence:
+  enabled: false

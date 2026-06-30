@@ -1,0 +1,18 @@
+# GCP (GKE) overrides. Fill from `terraform -chdir=deploy/terraform/gcp output`.
+replicaCount: 3
+serviceAccount:
+  annotations:
+    iam.gke.io/gcp-service-account: "mixle-mlops@PROJECT_ID.iam.gserviceaccount.com"   # Workload Identity
+objectStore:
+  url: "gs://CHANGE-ME-bucket"
+database:
+  url: "postgresql+psycopg://mixle:CHANGE_ME@CHANGE-ME-cloudsql-ip:5432/mixle"
+redis:
+  url: "redis://CHANGE-ME-memorystore-ip:6379/0"
+ingress:
+  enabled: true
+  className: gce
+autoscaling:
+  enabled: true
+persistence:
+  enabled: false

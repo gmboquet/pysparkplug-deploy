@@ -1,0 +1,124 @@
+# Default values for mixle-mlops. Override per-cloud with -f values-<cloud>.yaml or --set.
+# The SAME chart runs on EKS/AKS/GKE/ACK; only objectStore.url / database.url / redis.url change.
+
+image:
+  repository: ghcr.io/gmboquet/mixle-mlops
+  tag: ""              # defaults to .Chart.AppVersion
+  pullPolicy: IfNotPresent
+imagePullSecrets: []
+
+nameOverride: ""
+fullnameOverride: ""
+
+replicaCount: 2       # cloud mode (Postgres + object store) is stateless → scale horizontally
+
+# -- ServiceAccount: annotate for cloud workload identity (IRSA / GKE WI / AKS WI / ACK RRSA) so no static
+#    cloud keys are needed for the object store.
+serviceAccount:
+  create: true
+  name: ""
+  annotations: {}
+    # AWS IRSA:        eks.amazonaws.com/role-arn: arn:aws:iam::123:role/mixle
+    # GCP WI:          iam.gke.io/gcp-service-account: mixle@project.iam.gserviceaccount.com
+    # Azure WI:        azure.workload.identity/client-id: <client-id>
+    # Alibaba ACK RRSA: pod-identity.alibabacloud.com/role-name: mixle
+
+podAnnotations: {}
+podLabels: {}
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 10001
+  fsGroup: 10001
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: false
+  capabilities:
+    drop: ["ALL"]
+
+service:
+  type: ClusterIP
+  port: 80
+  targetPort: 8000
+
+ingress:
+  enabled: false
+  className: ""       # nginx / alb / azure-application-gateway / gce / alb (ACK)
+  annotations: {}
+  hosts:
+    - host: mixle.example.com
+      paths:
+        - path: /
+          pathType: Prefix
+  tls: []
+
+autoscaling:
+  enabled: false
+  minReplicas: 2
+  maxReplicas: 10
+  targetCPUUtilizationPercentage: 70
+  targetMemoryUtilizationPercentage: ""
+
+resources:
+  requests:
+    cpu: 250m
+    memory: 512Mi
+  limits:
+    cpu: "2"
+    memory: 2Gi
+
+# -- Object store (multi-cloud): selected by MIXLE_OBJECT_STORE_URL. Local PVC default; set a cloud URL to use
+#    S3 / GCS / Azure Blob / OSS. See mixle_mlops/storage/objectstore.py.
+objectStore:
+  url: ""             # s3://bucket/prefix | gs://bucket | az://container | oss://bucket | "" => local PVC
+  endpoint: ""        # S3-compatible / OSS region endpoint / Azure account URL (optional)
+  region: ""
+
+# -- Database. Empty => SQLite on the PVC (local/dev). Set a postgresql+psycopg:// URL for cloud (put the secret
+#    in existingSecret or database.url; url is moved into the Secret).
+database:
+  url: ""             # postgresql+psycopg://user:pass@host:5432/mixle
+  existingSecret: ""  # name of a Secret with key MIXLE_DATABASE_URL (preferred for prod)
+
+# -- Redis (optional; rate-limit / cache / queues). Empty => disabled.
+redis:
+  url: ""             # redis://host:6379/0 (or rediss:// for TLS)
+  existingSecret: ""
+
+# -- LLM backend: any OpenAI-compatible server (Ollama / vLLM / llama.cpp / hosted).
+llm:
+  baseUrl: "http://mixle-ollama:11434/v1"
+  apiKey: "ollama"
+  models: '["llama3.2"]'
+  defaultModel: "echo"
+
+# -- Platform secret (password/token pepper). Provide via existingSecret in prod.
+secretKey: "change-me"
+existingSecret: ""    # Secret with MIXLE_SECRET_KEY (and optionally MIXLE_DATABASE_URL / MIXLE_REDIS_URL)
+
+requireAuth: true
+corsOrigins: '["*"]'
+
+# -- Extra MIXLE_* env (anything in config.py / objectstore.py). Rendered into the ConfigMap.
+extraEnv: {}
+  # MIXLE_ENABLE_DEMO_MODELS: "true"
+
+# -- Local-state PVC. Used only when database.url is empty (SQLite) and/or objectStore.url is empty (local fs).
+persistence:
+  enabled: true
+  storageClass: ""
+  accessMode: ReadWriteOnce
+  size: 10Gi
+  mountPath: /data
+
+# -- Optional in-cluster Ollama (for a self-contained demo). Off by default; use a managed/own LLM in prod.
+ollama:
+  enabled: false
+  image: ollama/ollama:latest
+  port: 11434
+  resources:
+    requests: { cpu: "500m", memory: 1Gi }
+    limits: { cpu: "4", memory: 8Gi }
+  persistence:
+    enabled: true
+    size: 20Gi
+    storageClass: ""

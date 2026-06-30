@@ -1,0 +1,22 @@
+# AWS (EKS) overrides. Fill from `terraform -chdir=deploy/terraform/aws output`.
+replicaCount: 3
+serviceAccount:
+  annotations:
+    eks.amazonaws.com/role-arn: "arn:aws:iam::ACCOUNT_ID:role/mixle-mlops"   # IRSA: grants S3 access, no keys
+objectStore:
+  url: "s3://CHANGE-ME-bucket"
+  region: "us-east-1"
+database:
+  url: "postgresql+psycopg://mixle:CHANGE_ME@CHANGE-ME-rds-endpoint:5432/mixle"
+redis:
+  url: "redis://CHANGE-ME-elasticache-endpoint:6379/0"
+ingress:
+  enabled: true
+  className: alb
+  annotations:
+    alb.ingress.kubernetes.io/scheme: internet-facing
+    alb.ingress.kubernetes.io/target-type: ip
+autoscaling:
+  enabled: true
+persistence:
+  enabled: false   # stateless in cloud mode

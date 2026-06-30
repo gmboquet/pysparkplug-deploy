@@ -31,6 +31,16 @@ class Settings(BaseSettings):
     llm_models: list[str] = []                       # ids to expose from the LLM backend ([] = discover)
     default_model: str = "echo"
 
+    # --- scale / cache / concurrency ---
+    redis_url: str | None = None                     # MIXLE_REDIS_URL: shared cache + rate-limit across replicas
+    enable_response_cache: bool = False              # cache (exact + semantic) chat completions
+    rate_limit_per_min: int = 0                      # 0 = disabled; else max requests/min per api key
+
+    # --- image-generation backend (OpenAI-compatible /v1/images/generations) ---
+    image_base_url: str = ""
+    image_api_key: str = ""
+    image_model: str = ""
+
     # --- cloud backends (deployment == "cloud") ---
     s3_bucket: str | None = None
     s3_endpoint: str | None = None

@@ -1,0 +1,137 @@
+"""Image generation: generate via the stub model through ``POST /v1/images/generations`` and assert the bytes
+land in the blob store + are retrievable. Self-contained: builds the app via create_app(), includes the images
++ files routers, registers a stub image model, signs up for a key, fresh blob store under tmp_path."""
+from __future__ import annotations
+
+import base64
+
+import mixle_mlops.multimodal.store as store_mod
+import mixle_mlops.storage.db as db
+import pytest
+from fastapi.testclient import TestClient
+
+from mixle_mlops.config import get_settings
+from mixle_mlops.gateway.app import create_app
+from mixle_mlops.gateway.routes import files as files_route
+from mixle_mlops.gateway.routes import images as images_route
+from mixle_mlops.image_gen import ImageGenAdapter, register_demo_image_model
+
+
+@pytest.fixture
+def client(tmp_path, monkeypatch):
+    monkeypatch.setenv("MIXLE_DATA_DIR", str(tmp_path))
+    get_settings.cache_clear()
+    db._engine = None
+    store_mod.reset_blob_store()
+    app = create_app()
+    app.include_router(images_route.router, prefix="/v1", tags=["images"])
+    app.include_router(files_route.router, prefix="/v1", tags=["files"])
+    # register the stub image model into the app's registry (built at lifespan startup)
+    with TestClient(app) as c:
+        register_demo_image_model(app.state.registry)
+        yield c
+    get_settings.cache_clear()
+    db._engine = None
+    store_mod.reset_blob_store()
+
+
+def _signup(client) -> dict:
+    raw = client.post("/auth/signup", json={"email": "i@t.com", "password": "pw12345"}).json()["api_key"]
+    return {"Authorization": f"Bearer {raw}"}
+
+
+def _is_png(data: bytes) -> bool:
+    return data[:8] == b"\x89PNG\r\n\x1a\n"
+
+
+def test_generate_stores_retrievable_image(client):
+    headers = _signup(client)
+
+    # auth required
+    assert client.post("/v1/images/generations",
+                       json={"model": "stub-image", "prompt": "a cat"}).status_code == 401
+
+    r = client.post("/v1/images/generations", headers=headers,
+                    json={"model": "stub-image", "prompt": "a red cube", "n": 2, "size": "512x512"})
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert len(body["data"]) == 2
+    assert "created" in body
+
+    # default response_format is url; fetch the stored blob back
+    for entry in body["data"]:
+        url = entry["url"]
+        assert url.startswith("/v1/files/")
+        content = client.get(url, headers=headers)
+        assert content.status_code == 200
+        assert content.headers["content-type"].startswith("image/png")
+        assert _is_png(content.content)
+
+
+def test_b64_json_response_format(client):
+    headers = _signup(client)
+    r = client.post("/v1/images/generations", headers=headers,
+                    json={"model": "stub-image", "prompt": "x", "response_format": "b64_json"})
+    assert r.status_code == 200, r.text
+    data = r.json()["data"]
+    assert len(data) == 1
+    assert "url" not in data[0]
+    assert _is_png(base64.b64decode(data[0]["b64_json"]))
+
+
+def test_default_image_model_when_unspecified(client):
+    headers = _signup(client)
+    # no model field → route picks the first image-capable model (stub-image)
+    r = client.post("/v1/images/generations", headers=headers, json={"prompt": "sunset"})
+    assert r.status_code == 200, r.text
+    assert len(r.json()["data"]) == 1
+
+
+def test_non_image_model_rejected(client):
+    headers = _signup(client)
+    # 'echo' is an LLM, not image-capable → 422
+    r = client.post("/v1/images/generations", headers=headers,
+                    json={"model": "echo", "prompt": "hi"})
+    assert r.status_code == 422
+
+
+def test_unknown_model_404(client):
+    headers = _signup(client)
+    r = client.post("/v1/images/generations", headers=headers,
+                    json={"model": "nope", "prompt": "hi"})
+    assert r.status_code == 404
+
+
+def test_empty_prompt_rejected(client):
+    headers = _signup(client)
+    r = client.post("/v1/images/generations", headers=headers,
+                    json={"model": "stub-image", "prompt": "   "})
+    assert r.status_code == 400
+
+
+def test_adapter_capabilities_and_chat_refusal():
+    import asyncio
+    import tempfile
+
+    from mixle_mlops.core.adapters import ChatMessage, ChatRequest
+    from mixle_mlops.multimodal.store import LocalBlobStore
+
+    with tempfile.TemporaryDirectory() as d:
+        adapter = ImageGenAdapter("stub-image", backend="stub", store=LocalBlobStore(d))
+        assert adapter.kind == "image"
+        assert "image_generation" in adapter.capabilities()
+        info = adapter.info()
+        assert "image_generation" in info.capabilities
+        assert info.kind == "composite"  # ModelInfo.kind Literal can't be 'image'; capability carries it
+
+        # chat() returns a note rather than pretending to chat
+        completion = asyncio.run(adapter.chat(ChatRequest(
+            model="stub-image", messages=[ChatMessage(role="user", content="hi")])))
+        assert "image-generation model" in completion.choices[0].message.content
+
+        # generate stores a real PNG
+        out = asyncio.run(adapter.generate("a tree", n=1))
+        assert len(out) == 1
+        assert _is_png(base64.b64decode(out[0]["b64_json"]))
+        _, data = LocalBlobStore(d).get(out[0]["id"])
+        assert _is_png(data)
