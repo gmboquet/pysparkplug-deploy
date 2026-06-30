@@ -11,7 +11,9 @@ from dataclasses import dataclass, field
 
 DEFAULT_IMAGE = "pytorch/pytorch:2.3.1-cuda12.1-cudnn8-runtime"
 
-MIXLE_PACKAGES = ["mixle"]
+# The mixle core is installed on the box from git by default (the box can `git clone` the public
+# repo) so it gets the current code, not a pinned PyPI release. Override per-job via --mixle-git.
+DEFAULT_MIXLE_SPEC = "git+https://github.com/gmboquet/mixle.git@evolve"
 LLM_PACKAGES = ["transformers>=4.44", "peft>=0.12", "datasets>=2.20", "accelerate>=0.33", "bitsandbytes>=0.43", "sentencepiece"]
 
 
@@ -37,6 +39,7 @@ class TrainingJob:
     disk: int = 40
     image: str | None = None
     requirements: list[str] = field(default_factory=list)
+    mixle_spec: str = DEFAULT_MIXLE_SPEC   # pip requirement for the mixle core (git URL or "mixle>=x")
     # lifecycle
     register: bool = True
     max_runtime_min: int = 60       # hard cap: destroy the box after this many minutes no matter what
@@ -61,7 +64,7 @@ def resolve_image(job: TrainingJob) -> str:
 
 
 def pip_packages(job: TrainingJob) -> list[str]:
-    base = LLM_PACKAGES if job.backend == "llm" else MIXLE_PACKAGES
+    base = LLM_PACKAGES if job.backend == "llm" else [job.mixle_spec]
     return [*base, *job.requirements]
 
 

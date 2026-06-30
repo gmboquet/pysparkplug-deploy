@@ -35,7 +35,11 @@ def test_training_command_mixle_and_llm():
 
 
 def test_pip_packages():
-    assert "mixle" in pip_packages(TrainingJob(name="m", backend="mixle", script="t.py", workdir="."))
+    mixle_pkgs = pip_packages(TrainingJob(name="m", backend="mixle", script="t.py", workdir="."))
+    assert any("mixle" in p for p in mixle_pkgs)  # installed from git by default
+    assert ["pomegranate"] == pip_packages(
+        TrainingJob(name="m", backend="mixle", script="t.py", workdir=".", mixle_spec="pomegranate")
+    )
     llm = pip_packages(TrainingJob(name="l", backend="llm", base_model="x"))
     assert any("peft" in p for p in llm) and any("transformers" in p for p in llm)
 

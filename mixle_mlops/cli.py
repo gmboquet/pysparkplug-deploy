@@ -50,6 +50,8 @@ def main(argv: list[str] | None = None) -> None:
     tr.add_argument("--max-runtime", dest="max_runtime", type=int, default=60,
                     help="hard cap (minutes): destroy the box after this long no matter what")
     tr.add_argument("--image", default=None, help="docker image override")
+    tr.add_argument("--mixle-git", dest="mixle_spec", default=None,
+                    help="pip spec for the mixle core on the box (default: git@evolve; env MIXLE_GIT)")
     tr.add_argument("--no-register", dest="register", action="store_false")
     tr.add_argument("--no-dry-run", dest="dry_run", action="store_false", help="actually rent a GPU and train")
     tr.add_argument("--local", action="store_true", help="run on THIS machine (no vast.ai) — validate before renting")
@@ -105,6 +107,7 @@ def main(argv: list[str] | None = None) -> None:
             image=args.image,
             register=args.register,
             max_runtime_min=args.max_runtime,
+            **({"mixle_spec": ms} if (ms := args.mixle_spec or os.environ.get("MIXLE_GIT")) else {}),
         )
         if args.local:
             result = run_local(job, registry_root=str(s.registry_root))

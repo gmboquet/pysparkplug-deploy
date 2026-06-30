@@ -16,13 +16,17 @@ Locally (no GPU rental, no spend):
 mixle-mlops train neural-experts --local --backend mixle \
     --script train.py --workdir examples/mixle_neural_experts
 ```
-On a rented GPU (same command, drop `--local`, set `MIXLE_VAST_API_KEY`):
+On a rented GPU (same command, drop `--local`, set `MIXLE_VAST_API_KEY`). The box installs the mixle
+core from git by default (`git+https://github.com/gmboquet/mixle.git@evolve`) so it runs the current
+code, not a pinned PyPI release — override with `--mixle-git` or the `MIXLE_GIT` env var:
 ```sh
 MIXLE_VAST_API_KEY=... mixle-mlops train neural-experts --backend mixle \
-    --repo <your-git-url> --script train.py --no-dry-run
+    --script train.py --workdir examples/mixle_neural_experts \
+    --gpu RTX_4090 --max-price 0.5 --max-runtime 20 --no-dry-run
 ```
 
-The script writes the trained model to `--output` and reloads it to confirm.
+The script writes the trained model to `--output` and reloads it to confirm. **Note:** as written the
+`NeuralLeaf` experts train on CPU; to actually exercise the GPU the leaf modules need to be moved to CUDA.
 
 ## Making the neural part an actual LLM
 
