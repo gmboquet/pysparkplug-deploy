@@ -74,6 +74,17 @@ def build_verifier(spec: dict[str, Any], registry: Any) -> Verifier | None:
         if model_id and registry.has(model_id):
             return llm_judge_verifier(registry.get(model_id),
                                       criterion=str(spec.get("criterion", "correctness and quality")))
+    if kind == "feature_reward":
+        pairs = spec.get("pairs")                             # [[winner, loser], ...] preference pairs to fit on
+        if pairs:
+            from ..feedback.feature_reward import FeatureRewardModel
+
+            reward = FeatureRewardModel(l2=float(spec.get("l2", 1.0))).fit([tuple(p) for p in pairs])
+
+            async def verify(text: str) -> float:
+                return float(reward.score(text))
+
+            return verify
     return None
 
 

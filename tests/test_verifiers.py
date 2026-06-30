@@ -11,8 +11,11 @@ from mixle_mlops.core.adapters import (
     ChoiceDelta,
     ModelAdapter,
 )
+import numpy as np
+
 from mixle_mlops.gateway.verifiers import (
     best_of_n_verified,
+    build_verifier,
     exact_match_verifier,
     llm_judge_verifier,
     numeric_verifier,
@@ -59,6 +62,46 @@ def test_llm_judge_verifier_parses_rating():
     judge = SeqAdapter("judge", ["I rate this 8 out of 10"])
     v = llm_judge_verifier(judge)
     assert asyncio.run(v("some answer")) == 8.0
+
+
+class _ToyEmbedder:
+    """coord 0 = (count 'good' − count 'bad'); deterministic, so the learned reward is testable."""
+
+    def embed(self, texts):
+        if isinstance(texts, str):
+            texts = [texts]
+        out = []
+        for t in texts:
+            q = float(t.count("good") - t.count("bad"))
+            v = np.array([q, 1.0])
+            out.append(v / np.linalg.norm(v))
+        return np.array(out)
+
+    def embed_one(self, text):
+        return self.embed([text])[0]
+
+
+def test_feature_reward_verifier_selects_preferred():
+    from mixle_mlops.feedback.feature_reward import FeatureRewardModel
+
+    reward = FeatureRewardModel(embedder=_ToyEmbedder(), l2=1e-3).fit([("good good", "bad bad"), ("good", "bad")])
+
+    async def verifier(text):
+        return float(reward.score(text))
+
+    adapter = SeqAdapter("gen", ["bad answer", "good good answer", "neutral"])
+    req = ChatRequest(model="gen", messages=[ChatMessage(role="user", content="?")])
+    completion, _info = asyncio.run(best_of_n_verified(adapter, req, n=3, verifier=verifier))
+    assert "good" in completion.choices[0].message.text()    # the learned reward picks the preferred candidate
+
+
+def test_build_feature_reward_verifier_from_spec():
+    from mixle_mlops.core.registry import ModelRegistry
+
+    spec = {"type": "feature_reward", "pairs": [["great work", "awful work"], ["good", "bad"]]}
+    verifier = build_verifier(spec, ModelRegistry())
+    assert verifier is not None
+    assert isinstance(asyncio.run(verifier("great work")), float)
 
 
 def test_best_of_n_verified_selects_correct():
