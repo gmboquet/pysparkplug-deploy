@@ -123,6 +123,22 @@ def test_speculative_with_real_transformers():
     assert spec == plain
 
 
+def test_local_engine_streams_token_by_token():
+    table = np.full((3, 3), -10.0)
+    table[0, 1], table[1, 2], table[2, 0] = 10.0, 10.0, 10.0
+    adapter = LocalEngineAdapter("toy", CharProvider("abc", table=table), max_new_tokens=5)
+    req = ChatRequest(model="toy", messages=[ChatMessage(role="user", content="a")])
+
+    async def collect():
+        return [ch async for ch in adapter.stream(req)]
+
+    chunks = asyncio.run(collect())
+    streamed = "".join(c.choices[0].delta.content or "" for c in chunks)
+    full = asyncio.run(adapter.chat(req)).choices[0].message.text()
+    assert streamed == full                                  # streamed deltas reassemble to the full generation
+    assert sum(1 for c in chunks if c.choices[0].delta.content) >= 2   # actually incremental, not one shot
+
+
 def test_speculative_adapter_is_lossless_vs_target():
     rng = np.random.default_rng(2)
     draft = CharProvider("abcd", table=rng.normal(size=(4, 4)))   # a different (cheap) model

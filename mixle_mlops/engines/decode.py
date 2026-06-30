@@ -64,23 +64,16 @@ def _top_p_filter(probs: np.ndarray, top_p: float) -> np.ndarray:
     return out / s if s > 0 else probs
 
 
-def decode(providers: LogitProvider | list[LogitProvider], *, prompt_ids: Sequence[int] = (),
-           max_new_tokens: int = 32, eos_id: int | None = None, weights: list[float] | None = None,
-           grammar: Any = None, greedy: bool = True, temperature: float = 1.0, top_p: float = 1.0,
-           seed: int = 0) -> list[int]:
-    """Decode token-by-token with optional Product-of-Experts fusion (multiple providers) and grammar masking.
-
-    Args:
-        providers: one provider, or several to fuse via token-level PoE.
-        grammar: optional object with ``start``, ``allowed(state) -> ids``, ``advance(state, token) -> state``,
-            ``is_accepting(state) -> bool``; masks each step to grammar-allowed tokens.
-    Returns the generated token ids (excluding the prompt).
-    """
+def decode_iter(providers: LogitProvider | list[LogitProvider], *, prompt_ids: Sequence[int] = (),
+                max_new_tokens: int = 32, eos_id: int | None = None, weights: list[float] | None = None,
+                grammar: Any = None, greedy: bool = True, temperature: float = 1.0, top_p: float = 1.0,
+                seed: int = 0):
+    """Stream token-by-token with optional Product-of-Experts fusion (multiple providers) and grammar masking.
+    Yields each generated token id as it is produced — the basis for true streaming generation."""
     provs = list(providers) if isinstance(providers, (list, tuple)) else [providers]
     rng = np.random.default_rng(seed)
     tokens = list(prompt_ids)
     state = getattr(grammar, "start", None) if grammar is not None else None
-    out: list[int] = []
 
     for _ in range(max_new_tokens):
         fused = fuse_logprobs([p.next_logits(tokens) for p in provs], weights)
@@ -88,7 +81,7 @@ def decode(providers: LogitProvider | list[LogitProvider], *, prompt_ids: Sequen
         if grammar is not None:                              # restrict to grammar-allowed tokens
             allowed = list(grammar.allowed(state))
             if not allowed:
-                break                                        # dead end (no valid continuation)
+                return                                       # dead end (no valid continuation)
             mask = np.full(fused.shape, -np.inf)
             mask[allowed] = 0.0
             fused = fused + mask
@@ -100,15 +93,19 @@ def decode(providers: LogitProvider | list[LogitProvider], *, prompt_ids: Sequen
             probs = _top_p_filter(probs, top_p)
             nxt = int(rng.choice(len(probs), p=probs))
 
-        out.append(nxt)
+        yield nxt
         tokens.append(nxt)
         if grammar is not None:
             state = grammar.advance(state, nxt)
         if eos_id is not None and nxt == eos_id:
-            break
+            return
         if grammar is not None and grammar.is_accepting(state) and not list(grammar.allowed(state)):
-            break                                            # grammar reached a terminal accepting state
-    return out
+            return                                           # grammar reached a terminal accepting state
+
+
+def decode(providers: LogitProvider | list[LogitProvider], **kwargs) -> list[int]:
+    """Collect :func:`decode_iter` into a list of generated token ids (token-level PoE + grammar masking)."""
+    return list(decode_iter(providers, **kwargs))
 
 
 def _seq_logits(provider: LogitProvider, token_ids: Sequence[int]) -> np.ndarray:

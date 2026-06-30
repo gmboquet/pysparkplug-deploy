@@ -18,7 +18,7 @@ from ..core.adapters import (
     ChoiceDelta,
     ModelAdapter,
 )
-from ..engines import decode, speculative_decode
+from ..engines import decode, decode_iter, speculative_decode
 
 
 class LocalEngineAdapter(ModelAdapter):
@@ -60,9 +60,23 @@ class LocalEngineAdapter(ModelAdapter):
             message=ChatMessage(role="assistant", content=text), finish_reason="stop")])
 
     async def stream(self, req: ChatRequest) -> AsyncIterator[ChatCompletionChunk]:
-        text = self._generate(req)
+        provs = self._providers if len(self._providers) > 1 else self._primary
+        ids = self._prompt_ids(req)
+        yield ChatCompletionChunk(model=req.model, choices=[ChatChunkChoice(delta=ChoiceDelta(role="assistant"))])
+        emitted: list[int] = []
+        prev = ""
+        for tok in decode_iter(provs, prompt_ids=ids, max_new_tokens=req.max_tokens or self.max_new_tokens,
+                               weights=self.weights, eos_id=getattr(self._primary, "eos", None),
+                               greedy=not req.temperature, temperature=req.temperature or 1.0,
+                               top_p=req.top_p or 1.0, grammar=req.extra.get("_grammar")):
+            emitted.append(tok)
+            text = self._primary.decode_text(emitted)
+            delta = text[len(prev):]                          # emit only the new text (BPE-safe)
+            prev = text
+            if delta:
+                yield ChatCompletionChunk(model=req.model, choices=[ChatChunkChoice(delta=ChoiceDelta(content=delta))])
         yield ChatCompletionChunk(model=req.model, choices=[ChatChunkChoice(
-            delta=ChoiceDelta(role="assistant", content=text), finish_reason="stop")])
+            delta=ChoiceDelta(), finish_reason="stop")])
 
 
 class SpeculativeAdapter(ModelAdapter):
@@ -101,7 +115,7 @@ class SpeculativeAdapter(ModelAdapter):
             message=ChatMessage(role="assistant", content=text), finish_reason="stop")])
 
     async def stream(self, req: ChatRequest) -> AsyncIterator[ChatCompletionChunk]:
-        text = self._generate(req)
+        text = self._generate(req)                            # speculative decoding is batched; emit the result
         yield ChatCompletionChunk(model=req.model, choices=[ChatChunkChoice(
             delta=ChoiceDelta(role="assistant", content=text), finish_reason="stop")])
 
