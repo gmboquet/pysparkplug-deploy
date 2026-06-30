@@ -1,0 +1,37 @@
+# Generic GPU compute overrides.
+#
+# This file is provider-neutral: use it on any Kubernetes cluster with GPU nodes and a working device plugin.
+# Most NVIDIA clusters advertise GPUs as nvidia.com/gpu. Adjust node labels, tolerations, storage, and runtime class
+# to match your provider.
+
+ollama:
+  enabled: true
+  runtimeClassName: ""       # e.g. "nvidia" on clusters that require a runtime class
+  # Example:
+  # nodeSelector:
+  #   accelerator: nvidia
+  nodeSelector: {}
+  # Example:
+  # tolerations:
+  #   - key: nvidia.com/gpu
+  #     operator: Exists
+  #     effect: NoSchedule
+  tolerations: []
+  affinity: {}
+  resources:
+    requests:
+      cpu: "1"
+      memory: 4Gi
+    limits:
+      cpu: "8"
+      memory: 24Gi
+      nvidia.com/gpu: 1
+  persistence:
+    enabled: true
+    size: 100Gi
+    storageClass: ""
+
+llm:
+  baseUrl: "http://mixle-ollama:11434/v1"
+  apiKey: "ollama"
+  models: '["llama3.2"]'

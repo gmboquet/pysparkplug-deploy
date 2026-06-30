@@ -15,8 +15,10 @@ OpenAI-compatible backend, Ollama by default).
 |------|---------|
 | `Dockerfile` | Multi-stage, slim, non-root image. Builds the package wheel, installs it + the mixle core (from git), runs `mixle-serve` on `0.0.0.0:8000`. |
 | `docker-compose.yml` | Local stack: `gateway` + `ollama` (default LLM backend), with an optional `postgres` (`--profile cloud`) and a named `mixle_data` volume. |
+| `docker-compose.gpu.yml` | Optional NVIDIA GPU override for single-host GPU compute. |
 | `.env.example` | All documented `MIXLE_*` env vars. Copy to `.env`. |
 | `k8s/` | `Deployment`+`Service` for the gateway (env from ConfigMap/Secret), a `PVC` for `mixle_data`, and an Ollama `Deployment`+`Service`. |
+| `compute/` | Provider-neutral recipes for GPU VMs, marketplace instances, managed k8s, and external OpenAI-compatible endpoints. |
 
 ## Run locally with Docker Compose
 
@@ -30,7 +32,7 @@ cp deploy/.env.example deploy/.env
 docker compose -f deploy/docker-compose.yml --env-file deploy/.env up -d gateway ollama
 
 # 3. Pull an LLM into Ollama (must match MIXLE_LLM_MODELS)
-docker compose -f deploy/docker-compose.yml exec ollama ollama pull llama3.2
+docker compose -f deploy/docker-compose.yml --env-file deploy/.env exec ollama ollama pull llama3.2
 
 # 4. Verify the gateway is up
 curl http://localhost:8000/health
@@ -66,7 +68,7 @@ curl http://localhost:8000/v1/chat/completions \
 ### Get an API key
 
 ```bash
-docker compose -f deploy/docker-compose.yml exec gateway \
+docker compose -f deploy/docker-compose.yml --env-file deploy/.env exec gateway \
   mixle-mlops create-user you@example.com hunter2
 # prints an api key — export it as MIXLE_API_KEY for the curls above
 ```
@@ -79,6 +81,19 @@ docker compose -f deploy/docker-compose.yml exec gateway \
 #   MIXLE_DATABASE_URL=postgresql+psycopg://mixle:mixle@postgres:5432/mixle
 docker compose -f deploy/docker-compose.yml --profile cloud --env-file deploy/.env up -d
 ```
+
+### GPU host mode
+
+On any NVIDIA GPU VM or rented marketplace box with Docker and the NVIDIA container runtime:
+
+```bash
+docker compose -f deploy/docker-compose.yml -f deploy/docker-compose.gpu.yml \
+  --env-file deploy/.env up -d gateway ollama
+```
+
+This is still provider-neutral: the gateway only requires that the model backend expose an OpenAI-compatible `/v1`
+API. See [`compute/README.md`](./compute/README.md) for external vLLM/Ollama/llama.cpp/TGI endpoints and Kubernetes
+GPU scheduling.
 
 ## Run on Kubernetes
 
@@ -124,3 +139,5 @@ stateless and you can raise `replicas` / attach an HPA and drop the PVC mount.
   Ollama (or available on whatever OpenAI-compatible backend `MIXLE_LLM_BASE_URL` points at).
 - Ollama is just the default OpenAI-compatible backend. Point `MIXLE_LLM_BASE_URL` at a vLLM,
   llama.cpp, TGI, or hosted endpoint to swap it out without touching the gateway.
+- Compute providers do not need first-class adapters if they can run one of those backends. Use
+  `MIXLE_LLM_BACKENDS` when several GPU pools or providers should appear in one model registry.

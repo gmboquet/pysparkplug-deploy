@@ -1,8 +1,12 @@
 # mixle-mlops multi-cloud setup (AWS · Azure · GCP · Alibaba Cloud · any S3-compatible)
 
 **One image, one Helm chart, every cloud.** The platform is cloud-agnostic: switching providers changes only
-three URLs — the **object store**, the **database**, and **redis**. The gateway container and the
+three state URLs — the **object store**, the **database**, and **redis**. The gateway container and the
 `deploy/helm/mixle-mlops` chart are identical everywhere (EKS / AKS / GKE / ACK / any conformant Kubernetes).
+
+Compute is intentionally separate from these managed-service profiles. Any GPU VM, marketplace instance, managed
+Kubernetes cluster, or on-prem host can serve models as long as it exposes an OpenAI-compatible `/v1` endpoint. See
+`deploy/compute/README.md`.
 
 ```
                     ┌──────────────────────────────────────────────┐
@@ -10,9 +14,12 @@ three URLs — the **object store**, the **database**, and **redis**. The gatewa
   (per provider) ─▶ │  outputs: object_store_url / database_url /   │
                     │           redis_url                           │
                     └───────────────────────┬──────────────────────┘
-                                             │  (3 URLs)
+                                             │  (3 state URLs)
                                              ▼
-  helm upgrade --install  ─▶  the SAME mixle-mlops chart + image  ─▶  running gateway
+  helm upgrade --install  ─▶  the SAME mixle-mlops chart + image  ─▶  gateway
+                                                                  │
+                                                                  ▼
+                                                    any /v1 model compute
 ```
 
 ## What selects the cloud
@@ -63,6 +70,16 @@ Each provider's chart values wire **workload identity** so the object-store driv
 ## S3-compatible (MinIO / R2 / Wasabi / on-prem)
 
 Use `s3://bucket` plus `objectStore.endpoint=https://your-endpoint`. No code or chart change.
+
+## Compute providers
+
+Do not add Terraform for every GPU marketplace unless you need that provider's API. The portable support path is:
+
+1. Run Ollama, vLLM, llama.cpp, TGI, or another OpenAI-compatible server on the compute provider.
+2. Set `MIXLE_LLM_BASE_URL` / Helm `llm.baseUrl` to that server's `/v1` URL.
+3. Use `MIXLE_LLM_BACKENDS` when different providers should appear as separate model ids.
+
+For single-host GPU and generic Kubernetes GPU recipes, see `deploy/compute/README.md`.
 
 ## Local / laptop
 

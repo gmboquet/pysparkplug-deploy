@@ -25,6 +25,10 @@ serviceAccount:
 
 podAnnotations: {}
 podLabels: {}
+runtimeClassName: ""
+nodeSelector: {}
+tolerations: []
+affinity: {}
 podSecurityContext:
   runAsNonRoot: true
   runAsUser: 10001
@@ -89,6 +93,7 @@ llm:
   baseUrl: "http://mixle-ollama:11434/v1"
   apiKey: "ollama"
   models: '["llama3.2"]'
+  backends: "{}"       # JSON object: {"model-id":{"base_url":"https://gpu.example/v1","api_key":"..."}}
   defaultModel: "echo"
 
 # -- Platform secret (password/token pepper). Provide via existingSecret in prod.
@@ -118,6 +123,10 @@ ollama:
   resources:
     requests: { cpu: "500m", memory: 1Gi }
     limits: { cpu: "4", memory: 8Gi }
+  runtimeClassName: ""
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
   persistence:
     enabled: true
     size: 20Gi

@@ -20,6 +20,21 @@ spec:
         {{- include "mixle-mlops.selectorLabels" . | nindent 8 }}
         app.kubernetes.io/component: ollama
     spec:
+      {{- if .Values.ollama.runtimeClassName }}
+      runtimeClassName: {{ .Values.ollama.runtimeClassName | quote }}
+      {{- end }}
+      {{- with .Values.ollama.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.ollama.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.ollama.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
       containers:
         - name: ollama
           image: {{ .Values.ollama.image }}

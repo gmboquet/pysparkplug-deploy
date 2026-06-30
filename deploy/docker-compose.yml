@@ -37,6 +37,7 @@ services:
       MIXLE_LLM_BASE_URL: ${MIXLE_LLM_BASE_URL:-http://ollama:11434/v1}
       MIXLE_LLM_API_KEY: ${MIXLE_LLM_API_KEY:-ollama}
       MIXLE_LLM_MODELS: ${MIXLE_LLM_MODELS:-["llama3.2"]}
+      MIXLE_LLM_BACKENDS: ${MIXLE_LLM_BACKENDS:-{}}
       MIXLE_DEFAULT_MODEL: ${MIXLE_DEFAULT_MODEL:-echo}
     volumes:
       - mixle_data:/data

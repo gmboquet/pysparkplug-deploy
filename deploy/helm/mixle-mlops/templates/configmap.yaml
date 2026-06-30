@@ -12,6 +12,7 @@ data:
   MIXLE_LLM_BASE_URL: {{ .Values.llm.baseUrl | quote }}
   MIXLE_LLM_API_KEY: {{ .Values.llm.apiKey | quote }}
   MIXLE_LLM_MODELS: {{ .Values.llm.models | quote }}
+  MIXLE_LLM_BACKENDS: {{ .Values.llm.backends | quote }}
   MIXLE_DEFAULT_MODEL: {{ .Values.llm.defaultModel | quote }}
   {{- if .Values.objectStore.url }}
   MIXLE_OBJECT_STORE_URL: {{ .Values.objectStore.url | quote }}

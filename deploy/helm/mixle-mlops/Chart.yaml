@@ -2,11 +2,12 @@ apiVersion: v2
 name: mixle-mlops
 description: >-
   Cloud-agnostic Helm chart for the mixle-mlops all-in-one AI platform gateway. The SAME image and chart run on
-  EKS, AKS, GKE, ACK, or any conformant Kubernetes — only the object store, database, and redis URLs change.
+  EKS, AKS, GKE, ACK, or any conformant Kubernetes — only the state URLs and OpenAI-compatible compute endpoints
+  change.
 type: application
 version: 0.1.0
 appVersion: "0.1.0"
-keywords: [mixle, mlops, llm, gateway, openai-compatible, multi-cloud]
+keywords: [mixle, mlops, llm, gateway, openai-compatible, multi-cloud, gpu]
 home: https://github.com/gmboquet/mixle-mlops
 sources:
   - https://github.com/gmboquet/mixle-mlops

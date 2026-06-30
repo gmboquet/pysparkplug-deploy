@@ -1,0 +1,20 @@
+# Optional GPU override for the local/dev Compose stack.
+#
+# Usage:
+#   docker compose -f deploy/docker-compose.yml -f deploy/docker-compose.gpu.yml \
+#     --env-file deploy/.env up -d gateway ollama
+#
+# The host must already have a working NVIDIA driver and container runtime.
+
+services:
+  ollama:
+    environment:
+      NVIDIA_VISIBLE_DEVICES: ${NVIDIA_VISIBLE_DEVICES:-all}
+      NVIDIA_DRIVER_CAPABILITIES: ${NVIDIA_DRIVER_CAPABILITIES:-compute,utility}
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: ${OLLAMA_GPU_COUNT:-all}
+              capabilities: [gpu]

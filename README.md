@@ -11,8 +11,8 @@ store + Redis) by changing config — no code change. Local-first, cloud-optiona
 
 ```sh
 cp deploy/.env.example deploy/.env          # set MIXLE_SECRET_KEY
-docker compose -f deploy/docker-compose.yml up -d gateway ollama
-docker compose -f deploy/docker-compose.yml exec ollama ollama pull llama3.2
+docker compose -f deploy/docker-compose.yml --env-file deploy/.env up -d gateway ollama
+docker compose -f deploy/docker-compose.yml --env-file deploy/.env exec ollama ollama pull llama3.2
 curl localhost:8000/v1/models               # OpenAI-compatible
 ```
 
@@ -30,6 +30,7 @@ curl localhost:8000/v1/models               # OpenAI-compatible
 | **Caching + rate limiting** (memory / Redis), **MCP server** | `extra` flags, `MIXLE_REDIS_URL`, `/mcp` |
 | **Chat UI** (Next.js, Claude/ChatGPT-like) | `frontend/` |
 | **Multi-cloud deploy** (AWS/Azure/GCP/Alicloud) | Helm chart + Terraform + `mixle-mlops init-cloud` |
+| **Universal cloud compute** (GPU VMs, marketplaces, managed k8s, on-prem) | Any OpenAI-compatible endpoint + generic Docker/Kubernetes GPU recipes |
 
 ## The mixle bridge — frontier quality on a laptop
 
@@ -79,8 +80,10 @@ cd deploy/terraform/aws && terraform apply
 helm install mixle deploy/helm/mixle-mlops -f deploy/helm/mixle-mlops/values-aws.yaml
 ```
 
-The same image + chart run on EKS/AKS/GKE/ACK — only three URLs (database / object store / redis) change. See
-`deploy/cloud/README.md`.
+The same image + chart run on EKS/AKS/GKE/ACK — only three URLs (database / object store / redis) change. Compute is
+provider-neutral: point `MIXLE_LLM_BASE_URL` / `MIXLE_LLM_BACKENDS` at any OpenAI-compatible server running on a GPU
+VM, marketplace instance, managed Kubernetes cluster, or on-prem host. See `deploy/cloud/README.md` and
+`deploy/compute/README.md`.
 
 ## Design
 
