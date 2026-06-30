@@ -20,6 +20,7 @@ dependencies = [
     "httpx>=0.27",          # proxy to OpenAI-compatible LLM backends (vLLM / Ollama / llama.cpp / hosted)
     "sqlmodel>=0.0.16",     # accounts / keys / registry / conversations / feedback storage
     "python-multipart>=0.0.9",  # multimodal file uploads
+    "pyjwt[crypto]>=2.8",   # OIDC id_token verification + Apple client-secret signing (Sign in with Google/Apple)
 ]
 
 [project.optional-dependencies]

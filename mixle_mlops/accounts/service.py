@@ -13,10 +13,13 @@ class AccountError(Exception):
     pass
 
 
-def create_user(session: Session, email: str, password: str, *, is_admin: bool = False) -> User:
+def create_user(
+    session: Session, email: str, password: str | None = None, *, is_admin: bool = False
+) -> User:
     if session.exec(select(User).where(User.email == email)).first():
         raise AccountError("email already registered")
-    user = User(email=email, hashed_password=security.hash_password(password), is_admin=is_admin)
+    hashed = security.hash_password(password) if password else None
+    user = User(email=email, hashed_password=hashed, is_admin=is_admin)
     session.add(user)
     session.commit()
     session.refresh(user)
