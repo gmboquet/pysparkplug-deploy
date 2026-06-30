@@ -103,6 +103,7 @@ def test_google_oidc_signin(tmp_path, monkeypatch):
                 "aud": client_id,
                 "sub": "google-user-123",
                 "email": "alice@gmail.com",
+                "email_verified": True,
                 "nonce": nonce,
                 "exp": 9999999999,
             },
@@ -153,7 +154,7 @@ def test_oauth_browser_redirect_flow(tmp_path, monkeypatch):
         started = c.get("/auth/oauth/google/url", params={"redirect_to": "http://localhost:8000/auth/device?user_code=ABCD-EFGH"}).json()
         id_token = jwt.encode(
             {"iss": "https://accounts.google.com", "aud": client_id, "sub": "u1",
-             "email": "bob@gmail.com", "nonce": started["nonce"], "exp": 9999999999},
+             "email": "bob@gmail.com", "email_verified": True, "nonce": started["nonce"], "exp": 9999999999},
             priv_pem, algorithm="RS256",
         )
         monkeypatch.setattr(oauth, "exchange_code", lambda p, code, ru: {"id_token": id_token})
@@ -164,5 +165,49 @@ def test_oauth_browser_redirect_flow(tmp_path, monkeypatch):
         loc = res.headers["location"]
         assert loc.startswith("http://localhost:8000/auth/device?user_code=ABCD-EFGH#")
         assert "token=" in loc and "email=" in loc
+    get_settings.cache_clear()
+    db._engine = None
+
+
+def test_oauth_rejects_open_redirect(tmp_path, monkeypatch):
+    with _make_client(tmp_path, monkeypatch, MIXLE_GOOGLE_CLIENT_ID="gid") as c:
+        # off-origin destinations are rejected (would otherwise leak the token via the fragment)
+        for evil in ["https://evil.com", "//evil.com", "http://localhost:9999/x"]:
+            assert c.get("/auth/oauth/google/url", params={"redirect_to": evil}).status_code == 400
+        # same-origin relative + absolute are allowed
+        assert c.get("/auth/oauth/google/url", params={"redirect_to": "/auth/device"}).status_code == 200
+        assert c.get("/auth/oauth/google/url",
+                     params={"redirect_to": "http://localhost:8000/auth/device"}).status_code == 200
+    get_settings.cache_clear()
+    db._engine = None
+
+
+def test_unverified_oidc_email_does_not_hijack_account(tmp_path, monkeypatch):
+    client_id = "gid.apps.googleusercontent.com"
+    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    priv_pem = key.private_bytes(
+        serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8, serialization.NoEncryption()
+    ).decode()
+    pub_pem = key.public_key().public_bytes(
+        serialization.Encoding.PEM, serialization.PublicFormat.SubjectPublicKeyInfo
+    ).decode()
+    with _make_client(tmp_path, monkeypatch, MIXLE_GOOGLE_CLIENT_ID=client_id) as c:
+        # an existing password account
+        victim = c.post("/auth/signup", json={"email": "victim@corp.com", "password": "pw123456"}).json()
+        started = c.get("/auth/oauth/google/url").json()
+        # attacker's OIDC identity claims the victim's email but it is NOT verified
+        id_token = jwt.encode(
+            {"iss": "https://accounts.google.com", "aud": client_id, "sub": "attacker-sub",
+             "email": "victim@corp.com", "email_verified": False, "nonce": started["nonce"], "exp": 9999999999},
+            priv_pem, algorithm="RS256",
+        )
+        monkeypatch.setattr(oauth, "exchange_code", lambda p, code, ru: {"id_token": id_token})
+        monkeypatch.setattr(oauth, "_signing_key", lambda p, t: pub_pem)
+        body = c.get("/auth/oauth/google/callback", params={"code": "x", "state": started["state"]}).json()
+        # must NOT resolve to the victim's account, and must not claim their email
+        assert body["user"]["id"] != victim["user"]["id"]
+        assert body["user"]["email"] != "victim@corp.com"
+    get_settings.cache_clear()
+    db._engine = None
     get_settings.cache_clear()
     db._engine = None

@@ -107,6 +107,8 @@ def oauth_url(provider: str, redirect_uri: str | None = None, redirect_to: str |
     prov = oauth.get_provider(provider)
     if prov is None:
         raise HTTPException(status_code=404, detail=f"provider '{provider}' is not enabled")
+    if not oauth.is_allowed_redirect(redirect_to):
+        raise HTTPException(status_code=400, detail="redirect_to is not an allowed (same-origin) destination")
     return oauth.authorization_url(prov, redirect_uri or _default_redirect(provider), redirect_to)
 
 
@@ -126,6 +128,8 @@ def _complete_login(provider: str, code: str, state: str, session: Session):
     user = oauth.find_or_create_user(session, provider, claims)
     _key, raw = service.create_api_key(session, user, name=f"{provider}-session", kind="session")
     redirect_to = payload.get("redirect_to")
+    if redirect_to and not oauth.is_allowed_redirect(redirect_to):
+        redirect_to = None  # defense-in-depth: never redirect a token to a non-same-origin URL
     if redirect_to:
         # Browser flow: hand the token back to the page via the URL fragment (never sent to a server).
         sep = "&" if "#" in redirect_to else "#"
@@ -264,7 +268,7 @@ async function loadProviders(){
     if((d.oauth||[]).length){ box.innerHTML='<div class="hr"></div>'; }
     for(const p of (d.oauth||[])){
       const b=document.createElement("button"); b.textContent="Sign in with "+p[0].toUpperCase()+p.slice(1);
-      b.onclick=async()=>{ const redirect=location.origin+"/auth/device?user_code="+encodeURIComponent(userCode);
+      b.onclick=async()=>{ const redirect="/auth/device?user_code="+encodeURIComponent(userCode);
         const u=await (await fetch("/auth/oauth/"+p+"/url?redirect_to="+encodeURIComponent(redirect))).json();
         location.href=u.url; };
       box.appendChild(b);

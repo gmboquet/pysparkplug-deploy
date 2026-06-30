@@ -11,9 +11,10 @@ import base64
 import hashlib
 import hmac
 import json
+import secrets
 import time
 from dataclasses import dataclass
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urlparse
 
 import httpx
 import jwt
@@ -129,13 +130,31 @@ def read_state(state: str, settings: Settings | None = None) -> dict:
     return payload
 
 
+def is_allowed_redirect(redirect_to: str | None, settings: Settings | None = None) -> bool:
+    """Guard against open-redirect / token leak: only same-origin destinations are allowed."""
+    if not redirect_to:
+        return True  # no post-login redirect -> JSON response (no fragment token)
+    if redirect_to.startswith("/") and not redirect_to.startswith("//"):
+        return True  # same-origin relative path
+    s = settings or get_settings()
+    try:
+        u, pub = urlparse(redirect_to), urlparse(s.public_url)
+    except ValueError:
+        return False
+    return u.scheme in ("http", "https") and (u.scheme, u.hostname, u.port) == (
+        pub.scheme,
+        pub.hostname,
+        pub.port,
+    )
+
+
 def authorization_url(
     provider: OAuthProvider,
     redirect_uri: str,
     redirect_to: str | None = None,
     settings: Settings | None = None,
 ) -> dict:
-    nonce = _b64u(hashlib.sha256(f"{time.time()}".encode()).digest())[:24]
+    nonce = secrets.token_urlsafe(24)  # cryptographically-random (was sha256 of wall-clock time)
     state = make_state(nonce, redirect_uri, redirect_to, settings)
     params = {
         "client_id": provider.client_id,
@@ -197,6 +216,10 @@ def verify_id_token(provider: OAuthProvider, id_token: str, nonce: str | None = 
 def find_or_create_user(session: Session, provider_name: str, claims: dict) -> User:
     sub = claims["sub"]
     email = claims.get("email")
+    # Only trust the email for cross-account linking if the provider says it is verified —
+    # otherwise an attacker could register an OIDC identity with a victim's email and take over
+    # the victim's existing password account.
+    verified = claims.get("email_verified") in (True, "true", "True", 1)
     ident = session.exec(
         select(OAuthIdentity).where(
             OAuthIdentity.provider == provider_name, OAuthIdentity.subject == sub
@@ -207,10 +230,13 @@ def find_or_create_user(session: Session, provider_name: str, claims: dict) -> U
         if user is not None:
             return user
     user = None
-    if email:
+    if email and verified:
         user = session.exec(select(User).where(User.email == email)).first()
     if user is None:
-        user = User(email=email or f"{provider_name}_{sub}@users.mixle.local")
+        # Verified email becomes the account email; otherwise key by (provider, sub) so we never
+        # collide with — or hijack — an existing account.
+        account_email = email if (email and verified) else f"{provider_name}_{sub}@users.mixle.local"
+        user = User(email=account_email)
         session.add(user)
         session.commit()
         session.refresh(user)
