@@ -56,6 +56,16 @@ class HFLogitProvider:
             logits = self.model(tensor).logits[0, -1]
         return logits.float().cpu().numpy()
 
+    def seq_logits(self, token_ids: Sequence[int]) -> np.ndarray:
+        """All-position next-token logits ``(len, vocab)`` in ONE forward pass — what makes speculative
+        verification a speedup (the target checks k drafted tokens in a single call)."""
+        torch = self._torch
+        ids = list(token_ids) or [self._bos if self._bos is not None else 0]
+        with torch.no_grad():
+            tensor = torch.tensor([ids], dtype=torch.long, device=self.device)
+            logits = self.model(tensor).logits[0]
+        return logits.float().cpu().numpy()
+
     def encode(self, text: str) -> list[int]:
         return list(self.tokenizer.encode(text)) if self.tokenizer is not None else []
 

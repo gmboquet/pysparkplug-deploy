@@ -109,3 +109,76 @@ def decode(providers: LogitProvider | list[LogitProvider], *, prompt_ids: Sequen
         if grammar is not None and grammar.is_accepting(state) and not list(grammar.allowed(state)):
             break                                            # grammar reached a terminal accepting state
     return out
+
+
+def _seq_logits(provider: LogitProvider, token_ids: Sequence[int]) -> np.ndarray:
+    """All-position logits for a sequence in one shot when the provider supports it (``seq_logits``), else by
+    looping ``next_logits`` (correct, slower). Row ``i`` predicts the token after ``token_ids[:i+1]``."""
+    fn = getattr(provider, "seq_logits", None)
+    if callable(fn):
+        return np.asarray(fn(token_ids), dtype=np.float64)
+    ids = list(token_ids)
+    return np.asarray([provider.next_logits(ids[:i + 1]) for i in range(len(ids))], dtype=np.float64)
+
+
+def speculative_decode(draft: LogitProvider, target: LogitProvider, *, prompt_ids: Sequence[int] = (),
+                       max_new_tokens: int = 32, k: int = 4, eos_id: int | None = None, greedy: bool = True,
+                       temperature: float = 1.0, seed: int = 0) -> list[int]:
+    """Speculative sampling (Leviathan/Chen 2023): the cheap ``draft`` proposes ``k`` tokens, the ``target``
+    verifies them in ONE forward pass; accepted tokens are kept, the first rejection is corrected by resampling.
+    The output distribution is identical to sampling from ``target`` alone — a lossless speedup. Returns tokens."""
+    rng = np.random.default_rng(seed)
+    tokens = list(prompt_ids)
+    out: list[int] = []
+
+    def pick(logits: np.ndarray) -> int:
+        if greedy:
+            return int(np.argmax(logits))
+        probs = _softmax(np.asarray(logits, dtype=np.float64) / max(temperature, 1e-6))
+        return int(rng.choice(len(probs), p=probs))
+
+    while len(out) < max_new_tokens:
+        n = len(tokens)
+        # draft proposes k tokens autoregressively
+        draft_toks: list[int] = []
+        draft_logits: list[np.ndarray] = []
+        cur = tokens[:]
+        for _ in range(k):
+            dl = np.asarray(draft.next_logits(cur), dtype=np.float64)
+            draft_logits.append(dl)
+            t = pick(dl)
+            draft_toks.append(t)
+            cur.append(t)
+
+        seq = _seq_logits(target, tokens + draft_toks)        # one target pass over the whole drafted sequence
+        accepted: list[int] = []
+        rejected = False
+        for j in range(k):
+            tl = seq[n - 1 + j]
+            if greedy:
+                tgt = int(np.argmax(tl))
+                accepted.append(tgt)
+                if draft_toks[j] != tgt:
+                    rejected = True
+                    break
+            else:
+                p = _softmax(tl / max(temperature, 1e-6))
+                q = _softmax(draft_logits[j] / max(temperature, 1e-6))
+                t = draft_toks[j]
+                if rng.random() < min(1.0, p[t] / max(q[t], 1e-12)):
+                    accepted.append(t)
+                else:
+                    resid = np.maximum(p - q, 0.0)
+                    s = resid.sum()
+                    accepted.append(int(rng.choice(len(p), p=resid / s)) if s > 0 else int(np.argmax(p)))
+                    rejected = True
+                    break
+        if not rejected:                                      # all k accepted -> a free bonus token from the target
+            accepted.append(pick(seq[n - 1 + k]))
+
+        for t in accepted:
+            out.append(t)
+            tokens.append(t)
+            if eos_id is not None and t == eos_id:
+                return out[:max_new_tokens]
+    return out[:max_new_tokens]

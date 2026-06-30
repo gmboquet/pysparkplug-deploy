@@ -6,7 +6,14 @@ import numpy as np
 import pytest
 
 from mixle_mlops.core.adapters import ChatMessage, ChatRequest
-from mixle_mlops.engines import HFLogitProvider, NgramProvider, TokenFSA, decode, fuse_logprobs
+from mixle_mlops.engines import (
+    HFLogitProvider,
+    NgramProvider,
+    TokenFSA,
+    decode,
+    fuse_logprobs,
+    speculative_decode,
+)
 from mixle_mlops.engines.decode import _softmax
 from mixle_mlops.engines.providers import CharProvider
 from mixle_mlops.models.local_engine import LocalEngineAdapter
@@ -92,6 +99,28 @@ def test_local_engine_poe_ensemble_picks_consensus():
     req = ChatRequest(model="poe", messages=[ChatMessage(role="user", content="a")])
     text = asyncio.run(adapter.chat(req)).choices[0].message.text()
     assert len(text) == 4 and set(text) == {"b"}                   # the PoE consensus token dominates every step
+
+
+def test_speculative_decoding_is_lossless_greedy():
+    rng = np.random.default_rng(1)
+    v = 8
+    draft = NgramProvider(rng.normal(size=(v, v)))           # a different (cheap) model
+    target = NgramProvider(rng.normal(size=(v, v)))
+    spec = speculative_decode(draft, target, prompt_ids=[0], max_new_tokens=10, k=4, greedy=True)
+    plain = decode(target, prompt_ids=[0], max_new_tokens=10, greedy=True)
+    assert spec == plain                                     # identical to plain target greedy decode (lossless)
+
+
+def test_speculative_with_real_transformers():
+    pytest.importorskip("torch")
+    pytest.importorskip("transformers")
+    from transformers import GPT2Config, GPT2LMHeadModel
+
+    model = GPT2LMHeadModel(GPT2Config(vocab_size=32, n_positions=32, n_embd=16, n_layer=2, n_head=2))
+    provider = HFLogitProvider(model=model)                  # exercises seq_logits (one forward, all positions)
+    spec = speculative_decode(provider, provider, prompt_ids=[1, 2], max_new_tokens=6, k=3, greedy=True)
+    plain = decode(provider, prompt_ids=[1, 2], max_new_tokens=6, greedy=True)
+    assert spec == plain
 
 
 @pytest.fixture
