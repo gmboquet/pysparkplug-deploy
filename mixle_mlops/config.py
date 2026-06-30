@@ -58,6 +58,13 @@ class Settings(BaseSettings):
     image_api_key: str = ""
     image_model: str = ""
 
+    # --- local diffusion (Stable Diffusion via diffusers, no external server) ---
+    diffusion_model: str = ""                          # HF model id, e.g. CompVis/stable-diffusion-v1-4
+    diffusion_steps: int = 20
+    diffusion_guidance: float = 7.5
+    diffusion_width: int = 512
+    diffusion_height: int = 512
+
     # --- cloud backends (deployment == "cloud") ---
     s3_bucket: str | None = None
     s3_endpoint: str | None = None

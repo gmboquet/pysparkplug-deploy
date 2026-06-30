@@ -76,6 +76,18 @@ def build_registry(settings: Settings) -> ModelRegistry:
                                                           max_new_tokens=settings.local_max_tokens))
         except Exception:                                            # never let model loading break startup
             pass
+    if settings.diffusion_model:                                     # local Stable Diffusion via diffusers
+        try:
+            from ..image_gen.local_diffusion import load_local_diffusion
+            registry.register(load_local_diffusion(
+                "sd-local", settings.diffusion_model,
+                steps=settings.diffusion_steps,
+                guidance_scale=settings.diffusion_guidance,
+                width=settings.diffusion_width,
+                height=settings.diffusion_height,
+            ))
+        except Exception:
+            pass
     return registry
 
 
