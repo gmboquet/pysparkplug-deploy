@@ -18,6 +18,8 @@ from sqlmodel import Session
 from ...accounts.models import User
 from ...evolve.lineage import get_run, list_runs, record_run
 from ...evolve.policy import EvolutionPolicy
+from ...evolve.scheduler import EvolutionScheduler
+from ...evolve.signals import recommend_threshold
 from ...evolve.worker import EvolutionWorker
 from ...storage.db import get_session
 from ..auth import require_user
@@ -34,6 +36,16 @@ class EvolveRequest(BaseModel):
 def _require_admin(user: User) -> None:
     if not user.is_admin:
         raise HTTPException(status_code=403, detail="self-evolution requires an admin account")
+
+
+# NOTE: static paths (/tick) must be declared before the parameterized /{model_id} route, or FastAPI matches
+# "/evolve/tick" as model_id="tick".
+@router.post("/tick")
+def tick(request: Request, user: User = Depends(require_user), session: Session = Depends(get_session)):
+    """Run one autonomous self-improvement pass over every hosted mixle model (admin)."""
+    _require_admin(user)
+    runs = EvolutionScheduler(request.app.state.registry).tick(session)
+    return {"object": "list", "data": [r.to_dict() for r in runs]}
 
 
 @router.post("/{model_id}")
@@ -70,3 +82,10 @@ def rollback(model_id: str, request: Request, user: User = Depends(require_user)
     if not EvolutionWorker(registry).rollback(model_id):
         raise HTTPException(status_code=409, detail="nothing to roll back (no promoted predecessor)")
     return {"model_id": model_id, "rolled_back": True}
+
+
+@router.get("/{model_id}/signals")
+def signals(model_id: str, target_escalation_rate: float = 0.2,
+            user: User = Depends(require_user), session: Session = Depends(get_session)):
+    """Router self-calibration: recent usage stats + the cascade threshold that would hit the target escalation rate."""
+    return recommend_threshold(session, model_id, target_escalation_rate=target_escalation_rate)

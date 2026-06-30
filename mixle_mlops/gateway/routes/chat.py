@@ -47,6 +47,20 @@ def _persist(user: User | None, req: ChatRequest, name: str, assistant_text: str
         return None
 
 
+def _record_signal(model_id: str, *, kind: str, confidence=None, escalated=None) -> None:
+    """Persist a usage signal (cascade decision / best-of-N confidence) for the self-evolution loop. Best-effort."""
+    try:
+        from sqlmodel import Session
+
+        from ...evolve.signals import record_signal
+        from ...storage.db import get_engine
+
+        with Session(get_engine()) as session:
+            record_signal(session, model_id, kind=kind, confidence=confidence, escalated=escalated)
+    except Exception:
+        pass
+
+
 @router.post("/chat/completions")
 async def chat_completions(req: ChatRequest, request: Request, response: Response,
                            user: User | None = Depends(current_user)):
@@ -129,6 +143,8 @@ async def chat_completions(req: ChatRequest, request: Request, response: Respons
             response.headers["X-Cascade-Escalated"] = "1" if info["escalated"] else "0"
             if info.get("local_confidence") is not None:
                 response.headers["X-Self-Consistency"] = f"{info['local_confidence']:.3f}"
+            _record_signal(name, kind="cascade", confidence=info.get("local_confidence"),
+                           escalated=info["escalated"])
             cid = _persist(user, req, name, completion.choices[0].message.text() if completion.choices else "")
             if cid:
                 response.headers["X-Conversation-Id"] = cid
@@ -151,6 +167,7 @@ async def chat_completions(req: ChatRequest, request: Request, response: Respons
             conf = info.get("confidence")
             if conf is not None:
                 response.headers["X-Self-Consistency"] = f"{conf:.3f}"
+                _record_signal(name, kind="best_of_n", confidence=conf)
             cid = _persist(user, req, name, completion.choices[0].message.text() if completion.choices else "")
             if cid:
                 response.headers["X-Conversation-Id"] = cid
