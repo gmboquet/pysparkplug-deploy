@@ -92,3 +92,35 @@ def test_local_engine_poe_ensemble_picks_consensus():
     req = ChatRequest(model="poe", messages=[ChatMessage(role="user", content="a")])
     text = asyncio.run(adapter.chat(req)).choices[0].message.text()
     assert len(text) == 4 and set(text) == {"b"}                   # the PoE consensus token dominates every step
+
+
+@pytest.fixture
+def client(tmp_path, monkeypatch):
+    import mixle_mlops.storage.db as db
+    from fastapi.testclient import TestClient
+
+    from mixle_mlops.config import get_settings
+    from mixle_mlops.gateway.app import create_app
+
+    monkeypatch.setenv("MIXLE_DATA_DIR", str(tmp_path))
+    get_settings.cache_clear()
+    db._engine = None
+    app = create_app()
+    with TestClient(app) as c:
+        table = np.full((6, 6), -10.0)
+        table[:, 3] = 5.0                                          # prefer 'n' in the alphabet "yesno "
+        app.state.registry.register(LocalEngineAdapter("toy", CharProvider("yesno ", table=table), max_new_tokens=10))
+        yield c
+    get_settings.cache_clear()
+    db._engine = None
+
+
+def test_constrained_choices_on_local_engine_http(client):
+    raw = client.post("/auth/signup", json={"email": "loc@t.com", "password": "pw12345"}).json()["api_key"]
+    headers = {"Authorization": f"Bearer {raw}"}
+    r = client.post("/v1/chat/completions", headers=headers, json={
+        "model": "toy", "messages": [{"role": "user", "content": "answer"}],
+        "extra": {"constrained": {"choices": ["yes", "no"]}}})
+    assert r.status_code == 200
+    assert r.json()["choices"][0]["message"]["content"] in ("yes", "no")   # masked to a valid choice by construction
+    assert r.headers["X-Constrained-Valid"] == "1"

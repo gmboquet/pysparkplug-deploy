@@ -62,6 +62,14 @@ class HFLogitProvider:
     def decode_text(self, token_ids: Sequence[int]) -> str:
         return self.tokenizer.decode(list(token_ids)) if self.tokenizer is not None else ""
 
+    def vocab(self) -> dict[int, str]:
+        if getattr(self, "_vocab", None) is None:
+            if self.tokenizer is None:
+                self._vocab = {}
+            else:
+                self._vocab = {i: self.tokenizer.decode([i]) for i in range(self.vocab_size)}
+        return self._vocab
+
 
 class CharProvider:
     """Toy char-level LM over a fixed alphabet: deterministic bigram logits + char encode/decode. Lets the
@@ -85,3 +93,6 @@ class CharProvider:
 
     def decode_text(self, token_ids: Sequence[int]) -> str:
         return "".join(self.alphabet[i] for i in token_ids if 0 <= i < self.vocab_size)
+
+    def vocab(self) -> dict[int, str]:
+        return {i: c for i, c in enumerate(self.alphabet)}

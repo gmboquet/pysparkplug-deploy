@@ -36,6 +36,9 @@ class LocalEngineAdapter(ModelAdapter):
     def name(self) -> str:
         return self._name
 
+    def vocab(self) -> dict[int, str]:
+        return self._primary.vocab()
+
     def _prompt_ids(self, req: ChatRequest) -> list[int]:
         text = "".join(f"{m.role}: {m.text()}\n" for m in req.messages) + "assistant: "
         return self._primary.encode(text)

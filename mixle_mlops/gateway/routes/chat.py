@@ -209,6 +209,27 @@ async def chat_completions(req: ChatRequest, request: Request, response: Respons
     #     constraint to the backend's guided decoder + validate + repair-retry until the output conforms.
     cspec = req.extra.get("constrained")
     if isinstance(cspec, dict) and not req.stream:
+        # TRUE in-decode grammar masking for local-engine models with logit access (regex/choices -> TokenFSA);
+        # proxied models fall back to the backend's guided decoder + validate/repair.
+        from ...models.local_engine import LocalEngineAdapter
+
+        if isinstance(adapter, LocalEngineAdapter) and (cspec.get("regex") or cspec.get("choices")):
+            try:
+                from ...engines.regex_fsa import build_choice_fsa, regex_to_token_fsa
+
+                vocab = adapter.vocab()
+                eos = getattr(adapter._primary, "eos", None)
+                fsa = (build_choice_fsa(list(cspec["choices"]), vocab, eos_id=eos) if cspec.get("choices")
+                       else regex_to_token_fsa(cspec["regex"], vocab, eos_id=eos))
+                completion = await adapter.chat(req.model_copy(update={"extra": {**req.extra, "_grammar": fsa}}))
+                response.headers["X-Constrained-Valid"] = "1"      # masking makes the output well-formed by construction
+                cid = _persist(user, req, name, completion.choices[0].message.text() if completion.choices else "")
+                if cid:
+                    response.headers["X-Conversation-Id"] = cid
+                return completion
+            except Exception:
+                pass                                               # fall through to the backend path on any failure
+
         from ..constrained import constrained_complete
 
         completion, info = await constrained_complete(adapter, req, cspec)
