@@ -108,22 +108,17 @@ def launch(
     offers = client.search_offers(gpu_name=job.gpu, num_gpus=job.num_gpus, max_price=job.max_price)
     if not offers:
         raise VastError("no matching vast.ai offers — relax --gpu / --max-price")
-    offer = offers[0]
-    on_log(f"renting offer {offer.id}: {offer.gpu_name} x{offer.num_gpus} @ ${offer.price:.3f}/hr")
+
+    onstart_script = p["onstart"] if job.mode == "onstart" else None
+    offer, instance_id = _provision(client, offers, p["image"], job.disk, onstart_script, job.name, on_log)
 
     if job.mode == "onstart":
-        instance_id = client.create_instance(
-            offer.id, image=p["image"], disk=job.disk, onstart=p["onstart"], runtype="ssh_direct", label=job.name
-        )
         on_log(f"instance {instance_id} launched; it trains unattended and self-reports.")
         if not s3_dest:
             on_log("note: no object store configured — set s3_dest so the artifact is uploaded for retrieval.")
         return {"instance_id": instance_id, "mode": "onstart", "offer": offer.id, "s3_dest": s3_dest}
 
     # --- ssh mode ---
-    instance_id = client.create_instance(
-        offer.id, image=p["image"], disk=job.disk, runtype="ssh_direct", label=job.name
-    )
     # Safety: a hard runtime cap. Even if a command hangs (so the finally never runs), this fires on a
     # background thread and destroys the box so a hung job can't quietly run up the bill.
     watchdog = threading.Timer(
@@ -143,6 +138,23 @@ def launch(
     finally:
         watchdog.cancel()
         _safe_destroy(client, instance_id, on_log)
+
+
+def _provision(client, offers, image, disk, onstart, label, on_log):
+    """Try offers in price order until one actually provisions. vast offers go stale — a just-rented GPU
+    returns 400 'GPU conflict' — so we fall through to the next rather than failing the whole run."""
+    last = None
+    for offer in offers:
+        on_log(f"renting offer {offer.id}: {offer.gpu_name} x{offer.num_gpus} @ ${offer.price:.3f}/hr")
+        try:
+            iid = client.create_instance(
+                offer.id, image=image, disk=disk, onstart=onstart, runtype="ssh_direct", label=label
+            )
+            return offer, iid
+        except VastError as e:
+            on_log(f"  offer {offer.id} unavailable ({str(e)[:120]}); trying next …")
+            last = e
+    raise VastError(f"could not provision any of {len(offers)} matching offers; last error: {last}")
 
 
 def _safe_destroy(client: VastClient, instance_id: int, on_log: Log, why: str = "") -> None:
