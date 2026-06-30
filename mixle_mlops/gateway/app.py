@@ -61,6 +61,17 @@ def build_registry(settings: Settings) -> ModelRegistry:
                                               base_url=settings.image_base_url, api_key=settings.image_api_key))
         except Exception:
             pass
+    if settings.local_model or len(settings.local_poe_models) >= 2:   # local logit-level engine (PoE + grammar)
+        try:
+            from ..models.local_engine import load_local_engine
+            if settings.local_model:
+                registry.register(load_local_engine("local", [settings.local_model],
+                                                    max_new_tokens=settings.local_max_tokens))
+            if len(settings.local_poe_models) >= 2:
+                registry.register(load_local_engine("local-poe", settings.local_poe_models,
+                                                    max_new_tokens=settings.local_max_tokens))
+        except Exception:                                            # never let model loading break startup
+            pass
     return registry
 
 

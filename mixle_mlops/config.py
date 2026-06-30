@@ -35,6 +35,11 @@ class Settings(BaseSettings):
     llm_backends: dict[str, dict[str, str]] = {}
     default_model: str = "echo"
 
+    # --- local logit-level engine (token-level PoE + grammar masking via transformers; needs the `local` extra) ---
+    local_model: str = ""                            # a transformers model id to host through the decode engine
+    local_poe_models: list[str] = []                 # 2+ model ids -> a token-level Product-of-Experts ensemble
+    local_max_tokens: int = 128
+
     # --- self-evolution ---
     # >0 runs an autonomous improve pass over all hosted mixle models every N seconds. Off by default; run it on
     # ONE instance only (not every replica) — it mutates shared served models. Anti-regression: a pass can only
