@@ -29,6 +29,10 @@ class Settings(BaseSettings):
     llm_base_url: str = "http://localhost:11434/v1"
     llm_api_key: str = "ollama"
     llm_models: list[str] = []                       # ids to expose from the LLM backend ([] = discover)
+    # per-model backends — host local + cloud models in ONE registry (the cascade router prerequisite):
+    #   MIXLE_LLM_BACKENDS='{"llama3.2":{"base_url":"http://ollama:11434/v1"},
+    #                        "frontier":{"base_url":"https://api.openai.com/v1","api_key":"sk-...","upstream_model":"gpt-4o"}}'
+    llm_backends: dict[str, dict[str, str]] = {}
     default_model: str = "echo"
 
     # --- scale / cache / concurrency ---
@@ -44,6 +48,27 @@ class Settings(BaseSettings):
     # --- cloud backends (deployment == "cloud") ---
     s3_bucket: str | None = None
     s3_endpoint: str | None = None
+
+    # --- OAuth / OIDC sign-in ("Sign in with Google / Apple") ---
+    public_url: str = "http://localhost:8000"        # base URL of this gateway (OAuth redirect + device verification)
+    oauth_device_ttl: int = 600                      # seconds a device code stays valid
+    oauth_state_ttl: int = 600                       # seconds an OAuth state token stays valid
+    # Google
+    google_client_id: str = ""
+    google_client_secret: str = ""
+    google_issuer: str = "https://accounts.google.com"
+    google_jwks_uri: str = "https://www.googleapis.com/oauth2/v3/certs"
+    google_auth_uri: str = "https://accounts.google.com/o/oauth2/v2/auth"
+    google_token_uri: str = "https://oauth2.googleapis.com/token"
+    # Apple (Sign in with Apple). The "client secret" is an ES256 JWT signed with the .p8 key.
+    apple_client_id: str = ""                         # the Services ID
+    apple_team_id: str = ""
+    apple_key_id: str = ""
+    apple_private_key: str = ""                       # contents of the .p8 private key (PEM)
+    apple_issuer: str = "https://appleid.apple.com"
+    apple_jwks_uri: str = "https://appleid.apple.com/auth/keys"
+    apple_auth_uri: str = "https://appleid.apple.com/auth/authorize"
+    apple_token_uri: str = "https://appleid.apple.com/auth/token"
 
     def resolved_database_url(self) -> str:
         if self.database_url:

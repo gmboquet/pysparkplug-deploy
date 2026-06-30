@@ -34,9 +34,18 @@ from .routes import (
 def build_registry(settings: Settings) -> ModelRegistry:
     registry = ModelRegistry()
     registry.register(EchoAdapter("echo"))                      # always available; zero backends needed
-    for model_id in settings.llm_models:                        # configured LLM backend models
+    for model_id in settings.llm_models:                        # configured LLM backend models (shared backend)
         registry.register(OpenAICompatAdapter(model_id, base_url=settings.llm_base_url,
                                               api_key=settings.llm_api_key))
+    for model_id, backend in (settings.llm_backends or {}).items():   # per-model backends (local + cloud in one registry)
+        try:
+            registry.register(OpenAICompatAdapter(
+                model_id,
+                base_url=backend.get("base_url", settings.llm_base_url),
+                api_key=backend.get("api_key", settings.llm_api_key),
+                upstream_model=backend.get("upstream_model")))
+        except Exception:
+            pass
     if settings.enable_demo_models:                             # demo models for /v1/mixle and /v1/images
         for _register in (register_demo_mixle_model, register_demo_image_model):
             try:
