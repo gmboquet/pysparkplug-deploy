@@ -43,6 +43,8 @@ class TrainingJob:
     # lifecycle
     register: bool = True
     max_runtime_min: int = 60       # hard cap: destroy the box after this many minutes no matter what
+    provision_attempts: int = 4     # ssh mode: how many offers to try before giving up (stale/dud hosts)
+    boot_timeout_s: int = 300       # ssh mode: how long to wait for a box to become reachable before retrying
 
     def validate(self) -> None:
         if self.backend not in ("mixle", "llm"):

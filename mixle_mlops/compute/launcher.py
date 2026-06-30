@@ -109,35 +109,54 @@ def launch(
     if not offers:
         raise VastError("no matching vast.ai offers — relax --gpu / --max-price")
 
-    onstart_script = p["onstart"] if job.mode == "onstart" else None
-    offer, instance_id = _provision(client, offers, p["image"], job.disk, onstart_script, job.name, on_log)
-
     if job.mode == "onstart":
+        offer, instance_id = _provision(client, offers, p["image"], job.disk, p["onstart"], job.name, on_log)
         on_log(f"instance {instance_id} launched; it trains unattended and self-reports.")
         if not s3_dest:
             on_log("note: no object store configured — set s3_dest so the artifact is uploaded for retrieval.")
         return {"instance_id": instance_id, "mode": "onstart", "offer": offer.id, "s3_dest": s3_dest}
 
-    # --- ssh mode ---
-    # Safety: a hard runtime cap. Even if a command hangs (so the finally never runs), this fires on a
-    # background thread and destroys the box so a hung job can't quietly run up the bill.
-    watchdog = threading.Timer(
-        job.max_runtime_min * 60,
-        lambda: _safe_destroy(client, instance_id, on_log, why=f"max-runtime {job.max_runtime_min}m exceeded"),
+    # --- ssh mode: try offers until one provisions AND becomes reachable (stale offers 400; dud hosts
+    # never leave "loading"). Each failed box is destroyed before the next attempt so nothing leaks. ---
+    errors: list = []
+    for offer in offers[: max(1, job.provision_attempts)]:
+        on_log(f"renting offer {offer.id}: {offer.gpu_name} x{offer.num_gpus} @ ${offer.price:.3f}/hr")
+        try:
+            instance_id = client.create_instance(
+                offer.id, image=p["image"], disk=job.disk, runtype="ssh_direct", label=job.name
+            )
+        except VastError as e:
+            on_log(f"  offer {offer.id} unavailable ({str(e)[:120]}); trying next …")
+            errors.append(e)
+            continue
+        # Safety: a hard runtime cap. Even if a command hangs (so the finally never runs), this fires on a
+        # background thread and destroys the box so a hung job can't quietly run up the bill.
+        watchdog = threading.Timer(
+            job.max_runtime_min * 60,
+            lambda iid=instance_id: _safe_destroy(client, iid, on_log, why=f"max-runtime {job.max_runtime_min}m"),
+        )
+        watchdog.daemon = True
+        watchdog.start()
+        try:
+            try:
+                host, port = _wait_for_ssh(client, instance_id, on_log, timeout=job.boot_timeout_s)
+            except VastError as e:
+                on_log(f"  instance {instance_id} never became reachable ({e}); destroying + trying next offer …")
+                errors.append(e)
+                continue  # the finally destroys this dud before we try the next offer
+            _run_over_ssh(host, port, job, on_log)
+            local = _fetch_artifact(host, port, job, artifact_dir, on_log)
+            result: dict = {"instance_id": instance_id, "offer": offer.id, "artifact": local}
+            if job.register and registry_root:
+                result["registered"] = _register(job, local, registry_root, offer, on_log)
+            return result
+        finally:
+            watchdog.cancel()
+            _safe_destroy(client, instance_id, on_log)
+    raise VastError(
+        f"no offer became reachable after {min(len(offers), job.provision_attempts)} attempts; "
+        f"last error: {errors[-1] if errors else 'none'}"
     )
-    watchdog.daemon = True
-    watchdog.start()
-    try:
-        host, port = _wait_for_ssh(client, instance_id, on_log)
-        _run_over_ssh(host, port, job, on_log)
-        local = _fetch_artifact(host, port, job, artifact_dir, on_log)
-        result: dict = {"instance_id": instance_id, "offer": offer.id, "artifact": local}
-        if job.register and registry_root:
-            result["registered"] = _register(job, local, registry_root, offer, on_log)
-        return result
-    finally:
-        watchdog.cancel()
-        _safe_destroy(client, instance_id, on_log)
 
 
 def _provision(client, offers, image, disk, onstart, label, on_log):
