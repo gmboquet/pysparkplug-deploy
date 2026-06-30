@@ -275,6 +275,49 @@ def regex_to_token_fsa(pattern: str, vocab: dict[int, str], *, eos_id: int | Non
     return TokenFSA(transitions, start=0, accepting=accepting)
 
 
+_META = set(r".[]()|*+?{}\^")
+
+
+def _escape(s: str) -> str:
+    """Backslash-escape regex metacharacters so ``s`` matches literally in this engine."""
+    return "".join("\\" + c if c in _META else c for c in s)
+
+
+def _value_regex(prop: dict) -> str:
+    """A regex matching a JSON value of the given schema property (canonical formatting)."""
+    if "enum" in prop:
+        opts = []
+        for v in prop["enum"]:
+            opts.append('"' + _escape(str(v)) + '"' if isinstance(v, str) else _escape(str(v)))
+        return "(" + "|".join(opts) + ")"
+    t = prop.get("type")
+    if t == "string":
+        return r'"[^"]*"'
+    if t == "integer":
+        return r"-?\d+"
+    if t == "number":
+        return r"-?\d+(\.\d+)?"
+    if t == "boolean":
+        return r"(true|false)"
+    return r'"[^"]*"'                                          # default: a string
+
+
+def json_schema_to_regex(schema: dict) -> str:
+    """Compile a flat-object JSON schema into a regex matching a canonical instance: ``{"k": v, ...}`` over the
+    required (or all) properties, each value constrained by its type/enum. Nested objects/arrays are out of scope
+    (an honest limit — they need a recursive grammar); scalar-field objects cover the common structured-output case."""
+    props = schema.get("properties", {})
+    required = schema.get("required") or list(props)
+    parts = [r'"' + _escape(key) + r'": ' + _value_regex(props.get(key, {})) for key in required]
+    return r"\{" + ", ".join(parts) + r"\}"
+
+
+def json_schema_to_token_fsa(schema: dict, vocab: dict[int, str], *, eos_id: int | None = None) -> TokenFSA:
+    """Compile a flat JSON schema into a TokenFSA over ``vocab`` — in-decode masking that makes the output a valid,
+    schema-conforming JSON object by construction."""
+    return regex_to_token_fsa(json_schema_to_regex(schema), vocab, eos_id=eos_id)
+
+
 def build_choice_fsa(choices: list[str], vocab: dict[int, str], *, eos_id: int | None = None) -> TokenFSA:
     """Constrain output to exactly one of ``choices`` — a trie over the vocabulary (always correct, no regex)."""
     inv: dict[str, list[int]] = {}

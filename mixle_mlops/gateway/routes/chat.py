@@ -213,14 +213,23 @@ async def chat_completions(req: ChatRequest, request: Request, response: Respons
         # proxied models fall back to the backend's guided decoder + validate/repair.
         from ...models.local_engine import LocalEngineAdapter
 
-        if isinstance(adapter, LocalEngineAdapter) and (cspec.get("regex") or cspec.get("choices")):
+        if isinstance(adapter, LocalEngineAdapter) and (cspec.get("regex") or cspec.get("choices")
+                                                        or cspec.get("json_schema")):
             try:
-                from ...engines.regex_fsa import build_choice_fsa, regex_to_token_fsa
+                from ...engines.regex_fsa import (
+                    build_choice_fsa,
+                    json_schema_to_token_fsa,
+                    regex_to_token_fsa,
+                )
 
                 vocab = adapter.vocab()
                 eos = getattr(adapter._primary, "eos", None)
-                fsa = (build_choice_fsa(list(cspec["choices"]), vocab, eos_id=eos) if cspec.get("choices")
-                       else regex_to_token_fsa(cspec["regex"], vocab, eos_id=eos))
+                if cspec.get("choices"):
+                    fsa = build_choice_fsa(list(cspec["choices"]), vocab, eos_id=eos)
+                elif cspec.get("json_schema"):
+                    fsa = json_schema_to_token_fsa(cspec["json_schema"], vocab, eos_id=eos)
+                else:
+                    fsa = regex_to_token_fsa(cspec["regex"], vocab, eos_id=eos)
                 completion = await adapter.chat(req.model_copy(update={"extra": {**req.extra, "_grammar": fsa}}))
                 response.headers["X-Constrained-Valid"] = "1"      # masking makes the output well-formed by construction
                 cid = _persist(user, req, name, completion.choices[0].message.text() if completion.choices else "")

@@ -3,7 +3,12 @@ import numpy as np
 import pytest
 
 from mixle_mlops.engines import NgramProvider, decode
-from mixle_mlops.engines.regex_fsa import build_choice_fsa, regex_to_token_fsa
+from mixle_mlops.engines.regex_fsa import (
+    build_choice_fsa,
+    json_schema_to_regex,
+    json_schema_to_token_fsa,
+    regex_to_token_fsa,
+)
 
 
 def _char_vocab(chars: str) -> dict[int, str]:
@@ -56,6 +61,26 @@ def test_choice_fsa_forces_one_choice():
 def test_invalid_regex_raises():
     with pytest.raises(ValueError):
         regex_to_token_fsa("a{2,5}", _char_vocab("a"))        # ranges are an honest unsupported subset
+
+
+def test_json_schema_to_regex():
+    schema = {"properties": {"age": {"type": "integer"}, "name": {"type": "string"}},
+              "required": ["age", "name"]}
+    assert json_schema_to_regex(schema) == r'\{"age": -?\d+, "name": "[^"]*"\}'
+
+
+def test_json_schema_fsa_produces_valid_json():
+    import json
+
+    schema = {"type": "object", "properties": {"flag": {"type": "boolean"}}, "required": ["flag"]}
+    alphabet = '{}"flag: trues'
+    vocab = _char_vocab(alphabet)
+    fsa = json_schema_to_token_fsa(schema, vocab)
+    out = decode(NgramProvider(np.zeros((len(alphabet), len(alphabet)))),
+                 prompt_ids=[0], max_new_tokens=30, grammar=fsa, greedy=True)
+    text = "".join(alphabet[t] for t in out)
+    parsed = json.loads(text)                                # masking guarantees parseable, schema-conforming JSON
+    assert "flag" in parsed and isinstance(parsed["flag"], bool)
 
 
 def test_digit_class_matches_digits_only():
