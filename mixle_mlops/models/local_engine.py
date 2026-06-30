@@ -40,18 +40,49 @@ class LocalEngineAdapter(ModelAdapter):
         return self._primary.vocab()
 
     def _prompt_ids(self, req: ChatRequest) -> list[int]:
+        tok = getattr(self._primary, "tokenizer", None)
+        if tok is not None and hasattr(tok, "apply_chat_template") and tok.chat_template:
+            messages = [{"role": m.role, "content": m.text()} for m in req.messages]
+            ids = tok.apply_chat_template(messages, tokenize=True, add_generation_prompt=True)
+            return list(ids)
         text = "".join(f"{m.role}: {m.text()}\n" for m in req.messages) + "assistant: "
         return self._primary.encode(text)
+
+    def _eos_ids(self) -> set[int]:
+        """All token ids that should stop generation (model eos + chat-template end tokens)."""
+        tok = getattr(self._primary, "tokenizer", None)
+        eos = set()
+        raw = getattr(self._primary, "eos", None)
+        if raw is not None:
+            eos.update(raw if isinstance(raw, (list, tuple)) else [raw])
+        if tok is not None:
+            # Add any additional special end tokens (e.g. <|im_end|> for ChatML models)
+            for name in ("eos_token", "pad_token"):
+                t = getattr(tok, name, None)
+                if t:
+                    ids = tok.convert_tokens_to_ids([t])
+                    eos.update(i for i in ids if i != tok.unk_token_id)
+            for tok_id in (tok.additional_special_tokens_ids or []):
+                decoded = tok.decode([tok_id])
+                if "end" in decoded or "eot" in decoded or "im_end" in decoded:
+                    eos.add(tok_id)
+        return eos
 
     def _generate(self, req: ChatRequest) -> str:
         ids = self._prompt_ids(req)
         provs = self._providers if len(self._providers) > 1 else self._primary
+        eos_ids = self._eos_ids()
+        # decode() accepts a single eos_id; use the first one and strip the rest post-hoc
+        first_eos = next(iter(eos_ids), None)
         out = decode(
             provs, prompt_ids=ids, max_new_tokens=req.max_tokens or self.max_new_tokens,
-            weights=self.weights, eos_id=getattr(self._primary, "eos", None),
+            weights=self.weights, eos_id=first_eos,
             greedy=not req.temperature, temperature=req.temperature or 1.0, top_p=req.top_p or 1.0,
-            grammar=req.extra.get("_grammar"),                # an optional pre-built TokenFSA (programmatic)
+            grammar=req.extra.get("_grammar"),
         )
+        # Trim any trailing EOS tokens before decoding
+        while out and out[-1] in eos_ids:
+            out = out[:-1]
         return self._primary.decode_text(out)
 
     async def chat(self, req: ChatRequest) -> ChatCompletion:
@@ -62,16 +93,20 @@ class LocalEngineAdapter(ModelAdapter):
     async def stream(self, req: ChatRequest) -> AsyncIterator[ChatCompletionChunk]:
         provs = self._providers if len(self._providers) > 1 else self._primary
         ids = self._prompt_ids(req)
+        eos_ids = self._eos_ids()
+        first_eos = next(iter(eos_ids), None)
         yield ChatCompletionChunk(model=req.model, choices=[ChatChunkChoice(delta=ChoiceDelta(role="assistant"))])
         emitted: list[int] = []
         prev = ""
-        for tok in decode_iter(provs, prompt_ids=ids, max_new_tokens=req.max_tokens or self.max_new_tokens,
-                               weights=self.weights, eos_id=getattr(self._primary, "eos", None),
-                               greedy=not req.temperature, temperature=req.temperature or 1.0,
-                               top_p=req.top_p or 1.0, grammar=req.extra.get("_grammar")):
-            emitted.append(tok)
+        for tok_id in decode_iter(provs, prompt_ids=ids, max_new_tokens=req.max_tokens or self.max_new_tokens,
+                                  weights=self.weights, eos_id=first_eos,
+                                  greedy=not req.temperature, temperature=req.temperature or 1.0,
+                                  top_p=req.top_p or 1.0, grammar=req.extra.get("_grammar")):
+            if tok_id in eos_ids:
+                break
+            emitted.append(tok_id)
             text = self._primary.decode_text(emitted)
-            delta = text[len(prev):]                          # emit only the new text (BPE-safe)
+            delta = text[len(prev):]
             prev = text
             if delta:
                 yield ChatCompletionChunk(model=req.model, choices=[ChatChunkChoice(delta=ChoiceDelta(content=delta))])
