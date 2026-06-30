@@ -2,6 +2,8 @@
 registry built from config. Runnable end-to-end against the echo model or any OpenAI-compatible LLM backend."""
 from __future__ import annotations
 
+import asyncio
+import contextlib
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -62,13 +64,39 @@ def build_registry(settings: Settings) -> ModelRegistry:
     return registry
 
 
+async def _evolution_loop(app: FastAPI, interval: int) -> None:
+    """Autonomous self-improvement: every ``interval`` seconds, run one verify-gated improve pass over all
+    hosted mixle models. Best-effort and anti-regression — a pass can only improve or no-op a model."""
+    from sqlmodel import Session
+
+    from ..evolve.scheduler import EvolutionScheduler
+    from ..storage.db import get_engine
+
+    while True:
+        await asyncio.sleep(interval)
+        try:
+            with Session(get_engine()) as session:
+                EvolutionScheduler(app.state.registry).tick(session)
+        except Exception:
+            pass
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     settings = get_settings()
     init_db()
     app.state.settings = settings
     app.state.registry = build_registry(settings)
-    yield
+    evolve_task = None
+    if settings.evolve_interval_seconds > 0:                     # opt-in autonomous self-evolution loop
+        evolve_task = asyncio.create_task(_evolution_loop(app, settings.evolve_interval_seconds))
+    try:
+        yield
+    finally:
+        if evolve_task is not None:
+            evolve_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError, Exception):
+                await evolve_task
 
 
 def create_app() -> FastAPI:

@@ -35,6 +35,12 @@ class Settings(BaseSettings):
     llm_backends: dict[str, dict[str, str]] = {}
     default_model: str = "echo"
 
+    # --- self-evolution ---
+    # >0 runs an autonomous improve pass over all hosted mixle models every N seconds. Off by default; run it on
+    # ONE instance only (not every replica) — it mutates shared served models. Anti-regression: a pass can only
+    # improve or no-op a model, never degrade it.
+    evolve_interval_seconds: int = 0
+
     # --- scale / cache / concurrency ---
     redis_url: str | None = None                     # MIXLE_REDIS_URL: shared cache + rate-limit across replicas
     enable_response_cache: bool = False              # cache (exact + semantic) chat completions
