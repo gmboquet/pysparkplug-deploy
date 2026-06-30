@@ -77,8 +77,64 @@ def test_chat_classifies_last_message(client):
     assert "demo-task" in content
 
 
+def test_cascade_routes_on_calibrated_signal():
+    """The distilled task model's conformal/density gate drives the FrugalGPT cascade (not best-of-N voting)."""
+    import asyncio
+
+    from mixle_mlops.core.adapters import (
+        ChatChoice,
+        ChatCompletion,
+        ChatMessage,
+        ChatRequest,
+        ModelAdapter,
+    )
+    from mixle_mlops.gateway.cascade import cascade
+    from mixle_mlops.models.task_cascade import register_demo_task_model
+
+    class _Reg:
+        def __init__(self):
+            self.a = None
+
+        def register(self, adapter):
+            self.a = adapter
+
+    local = register_demo_task_model(_Reg(), name="local-task")
+
+    class FrontierStub(ModelAdapter):  # a frontier LLM that always answers "FRONTIER"
+        kind = "llm"
+
+        @property
+        def name(self):
+            return "frontier"
+
+        async def stream(self, req):  # pragma: no cover - chat() is overridden, so stream() is unused
+            return
+            yield  # make this an async generator
+
+        async def chat(self, req):
+            msg = ChatMessage(role="assistant", content="FRONTIER")
+            return ChatCompletion(model=req.model, choices=[ChatChoice(message=msg)])
+
+    frontier = FrontierStub()
+
+    def run(text):
+        req = ChatRequest(model="local-task", messages=[ChatMessage(role="user", content=text)])
+        return asyncio.run(cascade(local, frontier, req))
+
+    # a clearly-spam input is answered locally (no escalation)
+    comp, info = run("free prize winner click now")
+    assert info["signal"] == "calibrated"
+    assert info["escalated"] is False
+    assert comp.choices[0].message.content == "spam"
+
+    # a gibberish / out-of-distribution input escalates to the frontier
+    comp2, info2 = run("zxcvb 12345 ΩΨΔ !!! qqqq")
+    assert info2["escalated"] is True
+    assert comp2.choices[0].message.content == "FRONTIER"
+
+
 # --- unit level: the adapter directly, no gateway ---
-def test_adapter_plain_taskmodel_has_no_decide():
+def test_adapter_plain_taskmodel_capabilities():
     import numpy as np
 
     from mixle.task.distill import distill
@@ -90,8 +146,12 @@ def test_adapter_plain_taskmodel_has_no_decide():
     texts = [("free " if rng.rand() < 0.5 else "") + "hello world today" for _ in range(80)]
     student = distill(teacher, texts, n=3, dim=128, hidden=[16], epochs=80, seed=0)
     adapter = TaskCascadeAdapter("plain", student)  # a plain TaskModel, not calibrated
-    assert "decide" not in adapter.capabilities()
-    assert "predict" in adapter.capabilities()
+    assert {"predict", "score", "chat"} <= adapter.capabilities()
+    import asyncio
+
+    out = asyncio.run(adapter.predict(["free stuff"]))
+    assert out["labels"] == ["spam"]
+    assert "decisions" not in out  # a plain (uncalibrated) model carries no escalate decision
 
 
 if __name__ == "__main__":

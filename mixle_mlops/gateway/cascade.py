@@ -12,15 +12,33 @@ from __future__ import annotations
 
 from typing import Any
 
-from ..core.adapters import ChatCompletion, ModelAdapter
+from ..core.adapters import ChatChoice, ChatCompletion, ChatMessage, ModelAdapter
 from .bestofn import best_of_n
 
 
 async def cascade(local: ModelAdapter, frontier: ModelAdapter, req, *,
                   threshold: float = 0.6, n: int = 5, temperature: float = 0.8) -> tuple[ChatCompletion, dict[str, Any]]:
-    """Run the local model (best-of-N) and escalate to ``frontier`` iff its self-consistency confidence is below
-    ``threshold``. Returns ``(completion, info)``; ``info`` carries the routing decision for observability + the
-    self-evolution training signal."""
+    """Run the local model and escalate to ``frontier`` on the hard tail. Returns ``(completion, info)``; ``info``
+    carries the routing decision for observability + the self-evolution training signal.
+
+    If ``local`` exposes its *own* calibrated escalate signal (``escalation_decision`` -- e.g. a distilled task
+    model's conformal/density gate), that drives the route; otherwise the confidence is the best-of-N
+    self-consistency vote fraction and ``threshold`` is the quality/cost dial."""
+    signal = await local.escalation_decision(req)
+    if signal is not None:                                   # the local model knows its own confidence
+        escalate = bool(signal["escalate"])
+        info = {
+            "local_model": local.name, "local_confidence": signal.get("confidence"), "threshold": threshold,
+            "escalated": escalate, "frontier_model": frontier.name if escalate else None, "signal": "calibrated",
+        }
+        if not escalate:
+            completion = ChatCompletion(
+                model=req.model,
+                choices=[ChatChoice(message=ChatMessage(role="assistant", content=str(signal["answer"])))],
+            )
+            return completion, info
+        return await frontier.chat(req.model_copy(update={"stream": False})), info
+
     completion, bon = await best_of_n(local, req, n=max(2, int(n)), temperature=temperature)
     confidence = bon.get("confidence")
     escalate = confidence is None or confidence < threshold

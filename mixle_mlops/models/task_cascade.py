@@ -102,6 +102,16 @@ class TaskCascadeAdapter(ModelAdapter):
             return f"[{self._name}] escalate (uncertain; conformal set = {s or 'empty'})"
         return f"[{self._name}] {self._task(record)}"
 
+    async def escalation_decision(self, req: ChatRequest) -> dict[str, Any] | None:
+        """Drive the cascade with the calibrated gate: answer locally when confident, else signal escalate."""
+        last = next((m for m in reversed(req.messages) if m.role == "user"), None)
+        record = self._parse_record(last.text().strip() if last else "")
+        if not self._calibrated:
+            return {"escalate": False, "answer": str(self._task(record)), "confidence": 1.0}
+        s = self._model.predict_set(record)
+        escalate = bool(self._model._escalate_flags([record], [s])[0])
+        return {"escalate": escalate, "answer": (None if escalate else s[0]), "confidence": (0.0 if escalate else 1.0)}
+
     @staticmethod
     def _parse_record(raw: str) -> Any:
         """A task input may be a plain string or a JSON record (dict/list of fields)."""
@@ -123,7 +133,9 @@ def register_demo_task_model(registry: Any, *, name: str = "demo-task") -> TaskC
     import numpy as np
 
     from mixle.task.calibrate import CalibratedTaskModel
+    from mixle.task.density import DensityGate
     from mixle.task.distill import distill
+    from mixle.task.model import HashedNGram
 
     spam = ["free", "winner", "prize", "buy", "cheap", "offer", "click"]
     ham = ["meeting", "lunch", "project", "report", "schedule", "team", "review"]
@@ -146,7 +158,8 @@ def register_demo_task_model(registry: Any, *, name: str = "demo-task") -> TaskC
 
     train, cal = corpus(1), corpus(2)
     student = distill(teacher, train, n=4, dim=256, hidden=[32], epochs=150, seed=0, task="spam vs ham")
-    model = CalibratedTaskModel(student, alpha=0.1).calibrate(cal, teacher(cal))
+    gate = DensityGate(HashedNGram(n=3, dim=48, seed=1)).fit(train, n_components=3, seed=0)  # escalate OOD inputs
+    model = CalibratedTaskModel(student, alpha=0.1, density_gate=gate).calibrate(cal, teacher(cal))
     adapter = TaskCascadeAdapter(name, model)
     registry.register(adapter)
     return adapter
