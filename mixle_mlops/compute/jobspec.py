@@ -39,6 +39,7 @@ class TrainingJob:
     requirements: list[str] = field(default_factory=list)
     # lifecycle
     register: bool = True
+    max_runtime_min: int = 60       # hard cap: destroy the box after this many minutes no matter what
 
     def validate(self) -> None:
         if self.backend not in ("mixle", "llm"):

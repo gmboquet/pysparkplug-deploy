@@ -11,6 +11,7 @@ import os
 import shlex
 import subprocess
 import sys
+import threading
 import time
 from dataclasses import asdict, replace
 from pathlib import Path
@@ -123,6 +124,14 @@ def launch(
     instance_id = client.create_instance(
         offer.id, image=p["image"], disk=job.disk, runtype="ssh_direct", label=job.name
     )
+    # Safety: a hard runtime cap. Even if a command hangs (so the finally never runs), this fires on a
+    # background thread and destroys the box so a hung job can't quietly run up the bill.
+    watchdog = threading.Timer(
+        job.max_runtime_min * 60,
+        lambda: _safe_destroy(client, instance_id, on_log, why=f"max-runtime {job.max_runtime_min}m exceeded"),
+    )
+    watchdog.daemon = True
+    watchdog.start()
     try:
         host, port = _wait_for_ssh(client, instance_id, on_log)
         _run_over_ssh(host, port, job, on_log)
@@ -132,11 +141,16 @@ def launch(
             result["registered"] = _register(job, local, registry_root, offer, on_log)
         return result
     finally:
-        on_log(f"destroying instance {instance_id} …")
-        try:
-            client.destroy(instance_id)
-        except Exception as e:  # noqa: BLE001
-            on_log(f"warning: could not destroy instance {instance_id}: {e} — destroy it manually!")
+        watchdog.cancel()
+        _safe_destroy(client, instance_id, on_log)
+
+
+def _safe_destroy(client: VastClient, instance_id: int, on_log: Log, why: str = "") -> None:
+    on_log(f"destroying instance {instance_id}{' (' + why + ')' if why else ''} …")
+    try:
+        client.destroy(instance_id)
+    except Exception as e:  # noqa: BLE001
+        on_log(f"warning: could not destroy instance {instance_id}: {e} — destroy it manually!")
 
 
 def _wait_for_ssh(client: VastClient, instance_id: int, on_log: Log, timeout: float = 600) -> tuple[str, int]:

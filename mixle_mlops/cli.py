@@ -47,6 +47,8 @@ def main(argv: list[str] | None = None) -> None:
     tr.add_argument("--num-gpus", dest="num_gpus", type=int, default=1)
     tr.add_argument("--max-price", dest="max_price", type=float, default=None, help="$/hr cap")
     tr.add_argument("--disk", type=int, default=None, help="disk GB")
+    tr.add_argument("--max-runtime", dest="max_runtime", type=int, default=60,
+                    help="hard cap (minutes): destroy the box after this long no matter what")
     tr.add_argument("--image", default=None, help="docker image override")
     tr.add_argument("--no-register", dest="register", action="store_false")
     tr.add_argument("--no-dry-run", dest="dry_run", action="store_false", help="actually rent a GPU and train")
@@ -102,6 +104,7 @@ def main(argv: list[str] | None = None) -> None:
             disk=args.disk if args.disk is not None else s.vast_default_disk,
             image=args.image,
             register=args.register,
+            max_runtime_min=args.max_runtime,
         )
         if args.local:
             result = run_local(job, registry_root=str(s.registry_root))
