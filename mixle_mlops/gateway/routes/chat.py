@@ -115,6 +115,47 @@ async def chat_completions(req: ChatRequest, request: Request, response: Respons
             response.headers["X-Conversation-Id"] = cid
         return completion
 
+    # 4a. cascade router (opt-in via extra.cascade={frontier, threshold, n}): answer locally when the local
+    #     model is self-consistent enough, else escalate to a frontier model — the FrugalGPT quality/cost dial.
+    casc = req.extra.get("cascade")
+    if isinstance(casc, dict) and not req.stream:
+        frontier_id = casc.get("frontier")
+        if frontier_id and registry.has(frontier_id):
+            from ..cascade import cascade
+
+            completion, info = await cascade(adapter, registry.get(frontier_id), req,
+                                             threshold=float(casc.get("threshold", 0.6)),
+                                             n=int(casc.get("n", 5)))
+            response.headers["X-Cascade-Escalated"] = "1" if info["escalated"] else "0"
+            if info.get("local_confidence") is not None:
+                response.headers["X-Self-Consistency"] = f"{info['local_confidence']:.3f}"
+            cid = _persist(user, req, name, completion.choices[0].message.text() if completion.choices else "")
+            if cid:
+                response.headers["X-Conversation-Id"] = cid
+            return completion
+
+    # 4b. best-of-N self-consistency (opt-in via extra.best_of_n): sample N, return the majority answer +
+    #     a calibrated confidence (the X-Self-Consistency header), the test-time-compute quality lever.
+    bon = req.extra.get("best_of_n")
+    if bon and not req.stream:
+        try:
+            n = int(bon)
+        except (TypeError, ValueError):
+            n = 0
+        if n > 1:
+            from ..bestofn import best_of_n
+
+            completion, info = await best_of_n(adapter, req, n=n,
+                                               selector=str(req.extra.get("select", "self_consistency")),
+                                               temperature=req.temperature if req.temperature is not None else 0.8)
+            conf = info.get("confidence")
+            if conf is not None:
+                response.headers["X-Self-Consistency"] = f"{conf:.3f}"
+            cid = _persist(user, req, name, completion.choices[0].message.text() if completion.choices else "")
+            if cid:
+                response.headers["X-Conversation-Id"] = cid
+            return completion
+
     # 5. response cache (opt-in via MIXLE_ENABLE_RESPONSE_CACHE), exact-match, non-streaming, non-tool only
     rc = None
     if settings.enable_response_cache and not req.stream and not req.tools:
