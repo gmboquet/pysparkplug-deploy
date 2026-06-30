@@ -64,3 +64,74 @@ export interface OpenAIMessage {
   content: string | ContentPart[];
   name?: string;
 }
+
+// --- Wave 2: conversations / documents / RAG / images / datasets ---
+
+// Summary shape returned by GET /v1/conversations (and the head of the detail view).
+export interface ConversationSummary {
+  id: string;
+  title: string;
+  model: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+// A persisted message inside a conversation detail.
+export interface ConversationMessage {
+  id: string;
+  role: Role;
+  content: string;
+  created_at: string;
+}
+
+export interface ConversationDetail extends ConversationSummary {
+  messages: ConversationMessage[];
+}
+
+export type ExportFormat = "json" | "markdown" | "pdf";
+
+// An ingested RAG document (rag/models.py Document.to_dict).
+export interface RagDocument {
+  id: string;
+  object: "rag.document";
+  filename: string;
+  content_type: string;
+  blob_id: string | null;
+  n_chunks: number;
+  n_chars: number;
+  created_at: string | null;
+}
+
+// A retrieved snippet (rag/vectorstore.py Hit.to_dict).
+export interface RagHit {
+  id: string;
+  text: string;
+  score: number;
+  namespace: string;
+  source_id: string | null;
+  meta: Record<string, unknown>;
+}
+
+// One generated image entry (images.py returns url OR b64_json).
+export interface GeneratedImage {
+  url?: string;
+  b64_json?: string;
+}
+
+// A generated dataset artifact (datasets/models.py DatasetArtifact.to_dict).
+export interface DatasetArtifact {
+  id: string;
+  object: "dataset";
+  source: string; // "mixle" | "llm"
+  model: string | null;
+  format: string; // "jsonl" | "csv" | "parquet"
+  n_rows: number;
+  seed: number | null;
+  prompt: string | null;
+  blob_id: string | null;
+  url: string | null;
+  schema: Record<string, string>;
+  created_at: string | null;
+  // generate returns the artifact ref nested under "artifact"
+  artifact?: { id?: string; url?: string };
+}

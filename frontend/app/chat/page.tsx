@@ -30,10 +30,15 @@ export default function ChatPage() {
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [streaming, setStreaming] = useState(false);
   const [banner, setBanner] = useState<string | null>(null);
+  const [useRag, setUseRag] = useState(false);
 
   const abortRef = useRef<AbortController | null>(null);
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const fileRef = useRef<HTMLInputElement | null>(null);
+  // Persisted conversation this thread is writing to. The streaming route does not
+  // return a conversation id, so after the first authenticated turn we discover the
+  // freshly-created conversation (most-recently-updated) and thread subsequent turns.
+  const conversationRef = useRef<string | null>(null);
 
   // load models (works unauthenticated against the default echo model)
   useEffect(() => {
@@ -87,21 +92,37 @@ export default function ChatPage() {
         }))
       );
 
+      // Optional pipeline controls (both are passthrough `extra` options the gateway
+      // reads off the chat request). Only sent for authenticated callers.
+      const extra: api.ChatExtra = {};
+      if (token && useRag) extra.rag = true;
+      if (token && conversationRef.current) {
+        extra.conversation_id = conversationRef.current;
+      }
+
       let acc = "";
-      await api.streamChat(token, model, wire, {
-        signal: controller.signal,
-        onDelta: (d) => {
-          acc += d;
-          setMessages((prev) =>
-            prev.map((m) =>
-              m.id === assistantId ? { ...m, content: acc } : m
-            )
-          );
+      let streamErrored = false;
+      await api.streamChat(
+        token,
+        model,
+        wire,
+        {
+          signal: controller.signal,
+          onDelta: (d) => {
+            acc += d;
+            setMessages((prev) =>
+              prev.map((m) =>
+                m.id === assistantId ? { ...m, content: acc } : m
+              )
+            );
+          },
+          onError: (msg) => {
+            streamErrored = true;
+            setBanner(msg);
+          },
         },
-        onError: (msg) => {
-          setBanner(msg);
-        },
-      });
+        extra
+      );
 
       setMessages((prev) =>
         prev.map((m) =>
@@ -110,8 +131,19 @@ export default function ChatPage() {
       );
       setStreaming(false);
       abortRef.current = null;
+
+      // Discover the conversation this turn was persisted into so subsequent turns
+      // thread into it. Best-effort: failures here never affect the chat.
+      if (token && !streamErrored && !conversationRef.current) {
+        try {
+          const convs = await api.listConversations(token);
+          if (convs.length > 0) conversationRef.current = convs[0].id;
+        } catch {
+          /* ignore */
+        }
+      }
     },
-    [model, token]
+    [model, token, useRag]
   );
 
   async function onSend() {
@@ -239,10 +271,29 @@ export default function ChatPage() {
                 {selectedModel.capabilities!.join(" · ")}
               </span>
             )}
+          {token && (
+            <label
+              className="ml-auto flex cursor-pointer items-center gap-1.5 text-xs text-muted"
+              title="Augment replies with retrieval from your uploaded documents + past conversations"
+            >
+              <input
+                type="checkbox"
+                checked={useRag}
+                onChange={(e) => setUseRag(e.target.checked)}
+                className="accent-accent"
+              />
+              Use my documents (RAG)
+            </label>
+          )}
           {messages.length > 0 && (
             <button
-              onClick={() => setMessages([])}
-              className="ml-auto rounded-md px-2 py-1 text-xs text-muted hover:bg-surface-2"
+              onClick={() => {
+                setMessages([]);
+                conversationRef.current = null;
+              }}
+              className={`${
+                token ? "" : "ml-auto "
+              }rounded-md px-2 py-1 text-xs text-muted hover:bg-surface-2`}
             >
               New chat
             </button>

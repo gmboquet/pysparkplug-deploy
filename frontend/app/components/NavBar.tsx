@@ -34,6 +34,30 @@ export function NavBar() {
           {ready && user ? (
             <>
               <Link
+                href="/conversations"
+                className="rounded-md px-3 py-1.5 text-muted hover:bg-surface-2 hover:text-fg"
+              >
+                Conversations
+              </Link>
+              <Link
+                href="/documents"
+                className="rounded-md px-3 py-1.5 text-muted hover:bg-surface-2 hover:text-fg"
+              >
+                Documents
+              </Link>
+              <Link
+                href="/images"
+                className="rounded-md px-3 py-1.5 text-muted hover:bg-surface-2 hover:text-fg"
+              >
+                Images
+              </Link>
+              <Link
+                href="/datasets"
+                className="rounded-md px-3 py-1.5 text-muted hover:bg-surface-2 hover:text-fg"
+              >
+                Datasets
+              </Link>
+              <Link
                 href="/keys"
                 className="rounded-md px-3 py-1.5 text-muted hover:bg-surface-2 hover:text-fg"
               >

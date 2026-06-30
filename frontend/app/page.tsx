@@ -56,6 +56,24 @@ export default function LandingPage() {
           No backend yet? The gateway ships with an <code>echo</code> model so the chat works
           out of the box.
         </p>
+
+        {/* platform quick links */}
+        <div className="mt-8 flex flex-wrap items-center justify-center gap-2">
+          {[
+            { href: "/conversations", label: "Conversations" },
+            { href: "/documents", label: "Documents (RAG)" },
+            { href: "/images", label: "Images" },
+            { href: "/datasets", label: "Datasets" },
+          ].map((l) => (
+            <Link
+              key={l.href}
+              href={l.href}
+              className="rounded-full border border-border bg-surface px-3 py-1.5 text-sm text-muted hover:bg-surface-2 hover:text-fg"
+            >
+              {l.label}
+            </Link>
+          ))}
+        </div>
       </section>
 
       {/* Features */}

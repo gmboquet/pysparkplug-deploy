@@ -4,9 +4,16 @@
 import type {
   ApiKeyInfo,
   Attachment,
+  ConversationDetail,
+  ConversationSummary,
+  DatasetArtifact,
+  ExportFormat,
+  GeneratedImage,
   ModelInfo,
   OpenAIMessage,
   PublicUser,
+  RagDocument,
+  RagHit,
 } from "./types";
 
 export const API_BASE =
@@ -204,17 +211,29 @@ export function toWireMessages(
   });
 }
 
+// Backend-specific passthrough options forwarded as the request's `extra` object.
+// `rag` opts into document/conversation retrieval augmentation; `conversation_id`
+// threads turns into a persisted conversation (chat.py reads both off `req.extra`).
+export interface ChatExtra {
+  rag?: boolean;
+  conversation_id?: string;
+  [key: string]: unknown;
+}
+
 // Stream a chat completion, parsing SSE `data:` lines incrementally.
 export async function streamChat(
   token: string | null,
   model: string,
   messages: OpenAIMessage[],
-  handlers: StreamHandlers
+  handlers: StreamHandlers,
+  extra?: ChatExtra
 ): Promise<void> {
+  const body: Record<string, unknown> = { model, messages, stream: true };
+  if (extra && Object.keys(extra).length > 0) body.extra = extra;
   const res = await fetch(`${API_BASE}/v1/chat/completions`, {
     method: "POST",
     headers: { "Content-Type": "application/json", ...authHeaders(token) },
-    body: JSON.stringify({ model, messages, stream: true }),
+    body: JSON.stringify(body),
     signal: handlers.signal,
   });
 
@@ -256,4 +275,205 @@ export async function streamChat(
       }
     }
   }
+}
+
+// Resolve a gateway-relative path (e.g. "/v1/files/abc/content") against API_BASE.
+// Absolute http(s) URLs are returned unchanged.
+export function resolveUrl(url: string): string {
+  if (/^https?:\/\//i.test(url) || url.startsWith("data:")) return url;
+  return `${API_BASE}${url.startsWith("/") ? "" : "/"}${url}`;
+}
+
+// Fetch a (possibly auth-protected) blob and trigger a browser download.
+// Blob endpoints like /v1/files/{id}/content and the conversation export require the
+// Bearer token, so a plain <a download> won't work — we fetch with auth then save.
+export async function downloadBlob(
+  token: string | null,
+  url: string,
+  filename: string
+): Promise<void> {
+  const res = await fetch(resolveUrl(url), { headers: authHeaders(token) });
+  if (!res.ok) throw new ApiError(res.status, await parseError(res));
+  const blob = await res.blob();
+  const objectUrl = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = objectUrl;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(objectUrl);
+}
+
+// --- conversations ---
+
+export async function listConversations(
+  token: string
+): Promise<ConversationSummary[]> {
+  const res = await fetch(`${API_BASE}/v1/conversations`, {
+    headers: authHeaders(token),
+  });
+  const body = await jsonOrThrow<{ data: ConversationSummary[] }>(res);
+  return body.data ?? [];
+}
+
+export async function getConversation(
+  token: string,
+  id: string
+): Promise<ConversationDetail> {
+  const res = await fetch(`${API_BASE}/v1/conversations/${id}`, {
+    headers: authHeaders(token),
+  });
+  return jsonOrThrow<ConversationDetail>(res);
+}
+
+export async function deleteConversation(
+  token: string,
+  id: string
+): Promise<void> {
+  const res = await fetch(`${API_BASE}/v1/conversations/${id}`, {
+    method: "DELETE",
+    headers: authHeaders(token),
+  });
+  if (!res.ok) throw new ApiError(res.status, await parseError(res));
+}
+
+// Download a conversation export (json | markdown | pdf). Uses an authenticated
+// fetch because the export route is behind require_user.
+export async function exportConversation(
+  token: string,
+  id: string,
+  format: ExportFormat
+): Promise<void> {
+  const suffix = format === "markdown" ? "md" : format;
+  await downloadBlob(
+    token,
+    `/v1/conversations/${id}/export?format=${format}`,
+    `conversation-${id}.${suffix}`
+  );
+}
+
+// --- documents + RAG ---
+
+export async function listDocuments(token: string): Promise<RagDocument[]> {
+  const res = await fetch(`${API_BASE}/v1/documents`, {
+    headers: authHeaders(token),
+  });
+  const body = await jsonOrThrow<{ data: RagDocument[] }>(res);
+  return body.data ?? [];
+}
+
+// POST /v1/documents is a multipart upload (the route takes an UploadFile "file"),
+// not JSON base64. Do not set Content-Type — the browser adds the multipart boundary.
+export async function uploadDocument(
+  token: string,
+  file: File
+): Promise<RagDocument> {
+  const form = new FormData();
+  form.append("file", file);
+  const res = await fetch(`${API_BASE}/v1/documents`, {
+    method: "POST",
+    headers: authHeaders(token),
+    body: form,
+  });
+  return jsonOrThrow<RagDocument>(res);
+}
+
+export async function ragSearch(
+  token: string,
+  query: string,
+  opts: { k?: number; namespace?: string | null } = {}
+): Promise<RagHit[]> {
+  const res = await fetch(`${API_BASE}/v1/rag/search`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...authHeaders(token) },
+    body: JSON.stringify({
+      query,
+      k: opts.k ?? 5,
+      namespace: opts.namespace ?? null,
+    }),
+  });
+  const body = await jsonOrThrow<{ data: RagHit[] }>(res);
+  return body.data ?? [];
+}
+
+// --- images ---
+
+export interface ImageGenParams {
+  prompt: string;
+  model?: string;
+  n?: number;
+  size?: string;
+  response_format?: "url" | "b64_json";
+}
+
+export async function generateImages(
+  token: string,
+  params: ImageGenParams
+): Promise<GeneratedImage[]> {
+  const res = await fetch(`${API_BASE}/v1/images/generations`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...authHeaders(token) },
+    body: JSON.stringify({
+      prompt: params.prompt,
+      model: params.model ?? "",
+      n: params.n ?? 1,
+      size: params.size,
+      response_format: params.response_format ?? "url",
+    }),
+  });
+  const body = await jsonOrThrow<{ data: GeneratedImage[] }>(res);
+  return body.data ?? [];
+}
+
+// --- datasets ---
+
+export interface DatasetGenerateParams {
+  source: "mixle" | "llm";
+  model: string;
+  n?: number;
+  seed?: number;
+  schema?: Record<string, string> | null;
+  prompt?: string | null;
+  format?: "jsonl" | "csv" | "parquet";
+  columns?: string[] | null;
+}
+
+export async function listDatasets(token: string): Promise<DatasetArtifact[]> {
+  const res = await fetch(`${API_BASE}/v1/datasets`, {
+    headers: authHeaders(token),
+  });
+  const body = await jsonOrThrow<{ data: DatasetArtifact[] }>(res);
+  return body.data ?? [];
+}
+
+export async function getDataset(
+  token: string,
+  id: string
+): Promise<DatasetArtifact> {
+  const res = await fetch(`${API_BASE}/v1/datasets/${id}`, {
+    headers: authHeaders(token),
+  });
+  return jsonOrThrow<DatasetArtifact>(res);
+}
+
+export async function generateDataset(
+  token: string,
+  params: DatasetGenerateParams
+): Promise<DatasetArtifact> {
+  const res = await fetch(`${API_BASE}/v1/datasets/generate`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...authHeaders(token) },
+    body: JSON.stringify({
+      source: params.source,
+      model: params.model,
+      n: params.n ?? 100,
+      seed: params.seed ?? 0,
+      schema: params.schema ?? null,
+      prompt: params.prompt ?? null,
+      format: params.format ?? "jsonl",
+      columns: params.columns ?? null,
+    }),
+  });
+  return jsonOrThrow<DatasetArtifact>(res);
 }
