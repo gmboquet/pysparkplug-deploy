@@ -10,7 +10,13 @@ from fastapi.responses import StreamingResponse
 
 from ...accounts.models import User
 from ...config import get_settings
-from ...core.adapters import ChatCompletion, ChatRequest
+from ...core.adapters import (
+    ChatChunkChoice,
+    ChatCompletion,
+    ChatCompletionChunk,
+    ChatRequest,
+    ChoiceDelta,
+)
 from ...multimodal.content import MultimodalError, normalize_messages
 from ..auth import current_user
 
@@ -77,9 +83,35 @@ async def chat_completions(req: ChatRequest, request: Request, user: User | None
         except Exception:
             pass
 
-    # 4. response cache (opt-in via MIXLE_ENABLE_RESPONSE_CACHE), exact-match, non-streaming only
+    # 4. server-side agentic loop (opt-in via extra.agent): the gateway executes the platform's tools
+    #    (MCP / RAG / mixle decide+predict) across turns. Client-declared `tools` still pass through to the
+    #    backend untouched when agent mode is off (standard OpenAI client-side tool use).
+    if req.extra.get("agent"):
+        from ..agent_loop import run_agent_loop
+        from ..tool_registry import ToolRegistry
+
+        tool_reg = ToolRegistry(registry, user_id=user.id if user is not None else None,
+                                names=req.extra.get("tools"))
+        max_iters = req.max_tool_iters or 6
+        if req.stream:
+            async def agent_stream():
+                completion = await run_agent_loop(adapter, req, tool_reg, max_iters=max_iters)
+                text = completion.choices[0].message.text() if completion.choices else ""
+                chunk = ChatCompletionChunk(model=name, choices=[ChatChunkChoice(
+                    index=0, delta=ChoiceDelta(role="assistant", content=text), finish_reason="stop")])
+                yield f"data: {chunk.model_dump_json()}\n\n"
+                _persist(user, req, name, text)
+                yield "data: [DONE]\n\n"
+
+            return StreamingResponse(agent_stream(), media_type="text/event-stream",
+                                     headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+        completion = await run_agent_loop(adapter, req, tool_reg, max_iters=max_iters)
+        _persist(user, req, name, completion.choices[0].message.text() if completion.choices else "")
+        return completion
+
+    # 5. response cache (opt-in via MIXLE_ENABLE_RESPONSE_CACHE), exact-match, non-streaming, non-tool only
     rc = None
-    if settings.enable_response_cache and not req.stream:
+    if settings.enable_response_cache and not req.stream and not req.tools:
         try:
             from ...cache import ResponseCache, get_cache
 

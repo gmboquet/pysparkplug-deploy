@@ -27,18 +27,53 @@ class ImagePart(BaseModel):
 ContentPart = TextPart | ImagePart
 
 
+# --- tool-calling wire shapes (OpenAI-compatible; all optional → absent means current single-shot behavior) ---
+class FunctionDef(BaseModel):
+    name: str
+    description: str | None = None
+    parameters: dict[str, Any] = Field(default_factory=dict)   # JSON-Schema for the arguments
+
+
+class ToolDef(BaseModel):
+    type: Literal["function"] = "function"
+    function: FunctionDef
+
+
+class FunctionCall(BaseModel):
+    name: str
+    arguments: str = ""                   # JSON-encoded arguments, per OpenAI
+
+
+class ToolCall(BaseModel):
+    id: str = Field(default_factory=lambda: "call_" + uuid.uuid4().hex[:24])
+    type: Literal["function"] = "function"
+    function: FunctionCall
+
+
+class ToolCallDelta(BaseModel):
+    """A streamed fragment of a tool call; OpenAI keys fragments by ``index`` so they can be reassembled."""
+    index: int = 0
+    id: str | None = None
+    type: str | None = None
+    function: dict[str, Any] | None = None   # {"name"?: str, "arguments"?: str-fragment}
+
+
 class ChatMessage(BaseModel):
     role: Role
-    content: str | list[ContentPart]
+    content: str | list[ContentPart] | None = None
     name: str | None = None
+    tool_calls: list[ToolCall] | None = None       # assistant turn requesting tool execution
+    tool_call_id: str | None = None                # a role="tool" result, correlated to the call it answers
 
     def text(self) -> str:
+        if self.content is None:
+            return ""
         if isinstance(self.content, str):
             return self.content
         return "".join(p.text for p in self.content if isinstance(p, TextPart))
 
     def images(self) -> list[str]:
-        if isinstance(self.content, str):
+        if not isinstance(self.content, list):
             return []
         return [p.image_url.get("url", "") for p in self.content if isinstance(p, ImagePart)]
 
@@ -51,6 +86,9 @@ class ChatRequest(BaseModel):
     max_tokens: int | None = None
     top_p: float | None = None
     user: str | None = None
+    tools: list[ToolDef] | None = None                    # OpenAI tool/function declarations
+    tool_choice: str | dict[str, Any] | None = None       # "auto"|"none"|"required"|{"type":"function",...}
+    max_tool_iters: int | None = None                     # gateway agentic-loop guard (stripped before upstream)
     extra: dict[str, Any] = Field(default_factory=dict)   # passthrough for backend-specific options
 
 
@@ -79,6 +117,7 @@ class ChatCompletion(BaseModel):
 class ChoiceDelta(BaseModel):
     role: Role | None = None
     content: str | None = None
+    tool_calls: list[ToolCallDelta] | None = None
 
 
 class ChatChunkChoice(BaseModel):
