@@ -52,13 +52,15 @@ def main() -> None:
     p.add_argument("--dataset", default=None, help="(optional) jsonl/npz; default = synthetic two-regime")
     p.add_argument("--name", default="neural-experts")
     p.add_argument("--experts", type=int, default=2)
+    p.add_argument("--device", default=None,
+                   help="torch device for the experts (cuda/mps/cpu); default auto (cuda if present)")
     p.add_argument("--restarts", type=int, default=6, help="seeded restarts (mixture EM can stall at a saddle)")
     p.add_argument("--em-iters", dest="em_iters", type=int, default=15)
     a = p.parse_args()
 
-    cuda = torch.cuda.is_available()
-    dev = "cuda:" + torch.cuda.get_device_name(0) if cuda else "cpu"
-    print(f"torch {torch.__version__} | device: {dev}")  # NeuralLeaf auto-uses CUDA when present
+    avail = ["cpu"] + (["cuda"] if torch.cuda.is_available() else []) \
+        + (["mps"] if torch.backends.mps.is_available() else [])
+    print(f"torch {torch.__version__} | requested device: {a.device or 'auto'} | available: {avail}")
 
     data, x = synthetic()  # (a --dataset loader would slot in here)
     print(f"training a mixture of {a.experts} neural experts on {len(data)} points "
@@ -69,7 +71,8 @@ def main() -> None:
     for seed in range(a.restarts):
         torch.manual_seed(seed)
         estimator = MixtureEstimator(
-            [NeuralLeaf(mlp([1, 16, 1]), noise=1.0, m_steps=40, lr=0.02).estimator() for _ in range(a.experts)]
+            [NeuralLeaf(mlp([1, 16, 1]), noise=1.0, m_steps=40, lr=0.02, device=a.device).estimator()
+             for _ in range(a.experts)]
         )
         model, header = fit_with_provenance(data, estimator, max_its=a.em_iters, seed=seed)
         if best_header is None or header.final_loglik > best_header.final_loglik:

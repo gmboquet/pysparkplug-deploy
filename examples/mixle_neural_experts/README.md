@@ -25,8 +25,20 @@ MIXLE_VAST_API_KEY=... mixle-mlops train neural-experts --backend mixle \
     --gpu RTX_4090 --max-price 0.5 --max-runtime 20 --no-dry-run
 ```
 
-The script writes the trained model to `--output` and reloads it to confirm. **Note:** as written the
-`NeuralLeaf` experts train on CPU; to actually exercise the GPU the leaf modules need to be moved to CUDA.
+The script writes the trained model to `--output` and reloads it to confirm.
+
+## Device
+
+`NeuralLeaf` resolves its device in priority order: an explicit `device=` → the **active compute engine's**
+device (so `optimize(engine=TorchEngine(device=…))` drives the leaf, matching mixle's engine philosophy)
+→ else CUDA-if-present, else CPU. Pass `--device cuda|mps|cpu` to pin it (e.g. `--device mps` to use an
+Apple-silicon GPU locally; the rented box uses CUDA automatically).
+
+Note a real limitation: `MixtureDistribution`'s E-step kernel is **numpy-only**, so you can't push a
+*mixture's* E-step through `TorchEngine`. The working pattern for a mixture of neural experts is therefore
+a numpy E-step (cheap) + the neural **M-step** on a GPU via the leaf's `device` (set explicitly, or via the
+engine for torch-resident models). The engine→leaf device-follow lands automatically once the mixture
+gains a torch kernel.
 
 ## Making the neural part an actual LLM
 
