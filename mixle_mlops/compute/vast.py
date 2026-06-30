@@ -6,6 +6,7 @@ training launcher needs — no SDK dependency.
 """
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass, field
 
 import httpx
@@ -126,3 +127,36 @@ class VastClient:
 
     def destroy(self, instance_id: int) -> None:
         self._request("DELETE", f"/instances/{instance_id}/")
+
+    def is_gone(self, instance_id: int) -> bool:
+        """Authoritative per-instance check: True once the instance no longer exists (or has terminated).
+
+        The /instances/ LIST endpoint can lag and report an instance gone while it is still billing, so
+        destruction must be confirmed against the per-instance GET, not the list."""
+        try:
+            inst = self.instance(instance_id)
+        except VastError:
+            return False  # couldn't check — treat as still-present so the caller keeps trying
+        if not inst:
+            return True
+        status = str(inst.get("actual_status") or inst.get("cur_state") or "").lower()
+        return status in ("exited", "destroyed")
+
+    def destroy_confirmed(self, instance_id: int, on_log=None, timeout: float = 150.0, poll: float = 5.0) -> bool:
+        """DELETE the instance and CONFIRM it is actually gone. A single DELETE can return 2xx without
+        terminating the box promptly, so re-issue and poll the per-instance GET until it disappears.
+        Returns True if confirmed gone within ``timeout``; False otherwise (caller must alert the user)."""
+        deadline = time.monotonic() + timeout
+        while True:
+            try:
+                self.destroy(instance_id)
+            except VastError as e:
+                if on_log:
+                    on_log(f"  destroy call error for {instance_id}: {e}")
+            if self.is_gone(instance_id):
+                return True
+            if time.monotonic() >= deadline:
+                return False
+            if on_log:
+                on_log(f"  instance {instance_id} not yet terminated; re-issuing destroy …")
+            time.sleep(poll)

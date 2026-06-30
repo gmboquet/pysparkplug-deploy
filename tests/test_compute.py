@@ -7,6 +7,26 @@ from mixle_mlops.compute.launcher import launch
 from mixle_mlops.compute.vast import VastClient
 
 
+def test_destroy_confirmed_polls_until_gone():
+    c = VastClient("k")
+    seen = {"n": 0}
+    c.destroy = lambda i: None  # type: ignore[method-assign]
+
+    def fake_instance(i):  # alive for two polls, then disappears
+        seen["n"] += 1
+        return {"actual_status": "running"} if seen["n"] < 3 else {}
+
+    c.instance = fake_instance  # type: ignore[method-assign]
+    assert c.destroy_confirmed(99, poll=0.0, timeout=5.0) is True
+
+
+def test_destroy_confirmed_times_out_to_false():
+    c = VastClient("k")
+    c.destroy = lambda i: None  # type: ignore[method-assign]
+    c.instance = lambda i: {"actual_status": "running"}  # never terminates  # type: ignore[method-assign]
+    assert c.destroy_confirmed(99, poll=0.0, timeout=0.15) is False
+
+
 def test_offer_query_shape():
     q = VastClient.build_query(gpu_name="RTX_4090", num_gpus=2, max_price=1.2, limit=10)
     assert q["gpu_name"] == {"in": ["RTX 4090"]}  # underscore -> space

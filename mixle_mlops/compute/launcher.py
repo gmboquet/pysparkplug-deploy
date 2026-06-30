@@ -182,11 +182,21 @@ def _provision(client, offers, image, disk, onstart, label, on_log):
 
 
 def _safe_destroy(client: VastClient, instance_id: int, on_log: Log, why: str = "") -> None:
+    """Destroy and CONFIRM the box is gone — a single DELETE can 2xx without terminating, so we poll the
+    per-instance GET until it disappears and shout if we can't confirm (so it never silently keeps billing)."""
     on_log(f"destroying instance {instance_id}{' (' + why + ')' if why else ''} …")
     try:
-        client.destroy(instance_id)
+        confirmed = client.destroy_confirmed(instance_id, on_log=on_log)
     except Exception as e:  # noqa: BLE001
-        on_log(f"warning: could not destroy instance {instance_id}: {e} — destroy it manually!")
+        confirmed = False
+        on_log(f"  destroy raised: {e}")
+    if confirmed:
+        on_log(f"  confirmed instance {instance_id} is gone (billing stopped).")
+    else:
+        on_log(
+            f"!! WARNING: could NOT confirm instance {instance_id} was destroyed — it may still be "
+            f"billing. Destroy it manually now at https://cloud.vast.ai/instances/"
+        )
 
 
 def _wait_for_ssh(client: VastClient, instance_id: int, on_log: Log, timeout: float = 600) -> tuple[str, int]:
