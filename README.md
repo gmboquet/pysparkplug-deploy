@@ -1,74 +1,91 @@
 # mixle-mlops
 
-A container + Kubernetes serving layer for **[mixle](https://github.com/gmboquet/mixle)**
-models: a thin FastAPI server over `mixle.inference.ModelService`, seed / drift-retrain helpers, a
-Dockerfile, and k8s manifests.
+An **all-in-one AI platform**: host [mixle](https://github.com/gmboquet/mixle) probabilistic models *and* open
+LLMs (Llama, DeepSeek, Qwen, …) behind one **OpenAI-compatible** gateway — with accounts, API keys, a chat UI,
+multimodal, RAG, an MCP server, tool calling + a server-side agentic loop, and the things that make mixle more
+than an LLM proxy: a **probabilistic-bridge stack** that lifts a laptop-sized model toward frontier quality, and
+**self-evolution** that improves served models from their own usage.
 
-This lives **outside** the core library on purpose — mixle ships the model primitives
-(`ModelRegistry`, `ModelService`, drift detection, provenance); the deployment opinions (HTTP, Docker,
-Kubernetes) live here. It's for the **classical / probabilistic models mixle builds** (CPU, one-shot
-scoring, retrain-on-drift) — not an LLM serving stack.
-
-## Install
+It runs end-to-end on a laptop (SQLite + filesystem + a local Ollama) and scales to the cloud (Postgres + object
+store + Redis) by changing config — no code change. Local-first, cloud-optional.
 
 ```sh
-# until mixle is on PyPI, the core comes from git:
-pip install "mixle @ git+https://github.com/gmboquet/mixle.git"
-pip install "mixle-mlops @ git+https://github.com/gmboquet/mixle-mlops.git"
-# or, for local dev:  pip install -e ".[dev]"
+cp deploy/.env.example deploy/.env          # set MIXLE_SECRET_KEY
+docker compose -f deploy/docker-compose.yml up -d gateway ollama
+docker compose -f deploy/docker-compose.yml exec ollama ollama pull llama3.2
+curl localhost:8000/v1/models               # OpenAI-compatible
 ```
 
-This installs three console scripts: **`mixle-serve`** (the API), **`mixle-seed`** (register+promote a model),
-**`mixle-drift-retrain`** (drift check → retrain → swap).
+## What's in the box
 
-## Run locally
-
-```sh
-export MIXLE_REGISTRY_ROOT=./models MIXLE_MODEL_NAME=model
-mixle-seed                                    # train + register + promote("production")
-export MIXLE_REFERENCE_PATH=./models/model/reference.json
-mixle-serve                                   # uvicorn on :8000
-```
-
-```sh
-curl localhost:8000/health
-curl -X POST localhost:8000/score -H 'content-type: application/json' -d '{"records":[1.0,2.5,9.9]}'
-curl -X POST localhost:8000/drift -H 'content-type: application/json' -d '{"records":[6.0,6.2,5.8]}'
-curl localhost:8000/info                      # provenance header
-```
-
-| endpoint | role |
+| Capability | Surface |
 |---|---|
-| `POST /score` | per-record log-density (non-finite → `null`, with `n_unscorable`) |
-| `GET /health` | k8s liveness/readiness probe + activity summary |
-| `GET /info` | the served model's provenance header |
-| `POST /drift` | drift report vs the reference sample (needs `MIXLE_REFERENCE_PATH`) |
-| `POST /reload` | hot model swap after `registry.promote(...)` |
+| **OpenAI-compatible chat** (streaming) over any hosted model | `POST /v1/chat/completions`, `GET /v1/models` |
+| **Host open LLMs** through their standard server (Ollama/vLLM/llama.cpp/hosted) | `MIXLE_LLM_BACKENDS` (local + cloud in one registry) |
+| **Host mixle models** with a real probabilistic surface | `POST /v1/mixle/{predict,score,latent,decide}` |
+| **Tool calling + server-side agent loop** (executes MCP tools, RAG, mixle decide/predict, exact compute) | `extra.agent`, `/mcp` |
+| **Accounts, API keys, OAuth** (Sign in with Google/Apple) | `/auth/*`, `mk-…` keys |
+| **Multimodal** (image inputs), **RAG** (PDF/DOCX/PPTX upload + retrieval), **image gen**, **dataset gen** | `/v1/files`, `/v1/documents`, `/v1/rag/search`, `/v1/images/generations`, `/v1/datasets` |
+| **Conversations** (persisted threads + json/markdown/pdf export) | `/v1/conversations` |
+| **Caching + rate limiting** (memory / Redis), **MCP server** | `extra` flags, `MIXLE_REDIS_URL`, `/mcp` |
+| **Chat UI** (Next.js, Claude/ChatGPT-like) | `frontend/` |
+| **Multi-cloud deploy** (AWS/Azure/GCP/Alicloud) | Helm chart + Terraform + `mixle-mlops init-cloud` |
 
-Config is by env var: `MIXLE_REGISTRY_ROOT`, `MIXLE_MODEL_NAME`, `MIXLE_MODEL_ALIAS`, `MIXLE_REFERENCE_PATH`,
-`MIXLE_ACTIVITY_LOG` (e.g. `/dev/stdout`).
+## The mixle bridge — frontier quality on a laptop
 
-## Kubernetes
+mixle is the calibrated **judge / combiner / router** around a small local generator. None of this puts 1T
+parameters on your laptop; it trades inference-time compute + verification + routing for quality on
+**verifiable / computational / structured / retrieval-grounded** tasks (and escalates the rest). All opt-in per
+request via `extra`:
+
+| Lever | Request | What it does |
+|---|---|---|
+| **Best-of-N self-consistency** | `extra.best_of_n: 5` | sample N, return the majority answer + a calibrated confidence (`X-Self-Consistency`) |
+| **Cascade router** (FrugalGPT) | `extra.cascade: {frontier, threshold, n}` | answer locally when confident, escalate to a frontier model only on the hard tail (`X-Cascade-Escalated`) |
+| **Mixture-of-Agents** | `extra.moa: {proposers, aggregator}` | several models propose, an aggregator synthesizes |
+| **Program-offload** (PAL) | the `mixle_solve` tool (agent mode) | the model offloads exact arithmetic/probability/stats to a deterministic solver instead of doing mental math |
+
+## Self-evolution — the system improves itself
+
+Served mixle models improve from data and from the platform's own usage, **only ever promoting a challenger that
+verifiably and non-regressively beats the champion** (built on `mixle.evolve`):
+
+- `POST /v1/evolve/{model}` — run measure → propose → verify → promote (auto-select / online-update / recalibrate / refit), with rollback.
+- `POST /v1/evolve/tick` — one autonomous pass over every hosted mixle model.
+- `GET /v1/evolve/{model}/signals` — the cascade router **self-calibrates** its threshold from observed traffic.
+- Every cascade decision + best-of-N vote is recorded as in-distribution feedback the loop consumes.
+
+## Develop
 
 ```sh
-docker build -t <registry>/mixle-mlops:latest . && docker push <registry>/mixle-mlops:latest
-# set the image in k8s/*.yaml, then:
-kubectl apply -f k8s/pvc.yaml
-kubectl apply -f k8s/seed-job.yaml          # one-shot: populate the registry
-kubectl apply -f k8s/deployment.yaml -f k8s/service.yaml
-kubectl apply -f k8s/drift-retrain-cronjob.yaml
+pip install -e ".[dev]"                      # + extras: documents, scale, datasets, export, cloud, mcp, all
+pytest -q                                    # the full suite
+ruff check mixle_mlops tests
+mixle-mlops create-user you@example.com pw --admin   # a user + an API key
+mixle-serve                                  # the gateway on :8000 (or: uvicorn mixle_mlops.gateway.app:app)
+cd frontend && npm install && npm run dev    # the chat UI on :3000
 ```
 
-Stateless replicas load the `production` alias from a shared `ModelRegistry`; a model swap is
-`registry.promote(...)` (done by `mixle-drift-retrain`) then `kubectl rollout restart deployment/mixle-model`
-(or `POST /reload`).
+Config is env-driven (prefix `MIXLE_`, see `deploy/.env.example` and `mixle_mlops/config.py`). Key knobs:
+`MIXLE_LLM_BASE_URL` (Ollama by default), `MIXLE_LLM_BACKENDS` (per-model local+cloud), `MIXLE_DATABASE_URL`
+(sqlite→postgres), `MIXLE_OBJECT_STORE_URL` (file→s3/gcs/azure/oss), `MIXLE_REDIS_URL`, `MIXLE_REQUIRE_AUTH`.
 
-## Caveats (harden for real use)
+## Deploy
 
-- **Registry storage** is filesystem-backed; the manifests use a `ReadWriteMany` PVC. No RWX class? Back it
-  with object storage (S3/GCS via a CSI mount, or adapt `ModelRegistry`).
-- **Logging**: set `MIXLE_ACTIVITY_LOG=/dev/stdout` so the per-request activity log lands in container logs.
-- **Record shape**: `/score` JSON arrays map to model records (inner arrays → tuples for composite models).
-- **Auth / rate limiting / TLS**: add at the ingress; none is included here.
-- **Estimator**: `mixle-seed` / `mixle-drift-retrain` use a Gaussian example — swap in your real model +
-  estimator and wire `drift_retrain._recent_batch()` to your production data store.
+```sh
+mixle-mlops init-cloud aws                    # scaffold a provider-correct .env
+# Terraform provisions bucket + Postgres + Redis; Helm runs the same image on any k8s:
+cd deploy/terraform/aws && terraform apply
+helm install mixle deploy/helm/mixle-mlops -f deploy/helm/mixle-mlops/values-aws.yaml
+```
+
+The same image + chart run on EKS/AKS/GKE/ACK — only three URLs (database / object store / redis) change. See
+`deploy/cloud/README.md`.
+
+## Design
+
+The split mirrors mixle's: **mixle** owns the domain-neutral math (distributions, scoring, calibration, decision,
+`mixle.evolve`); **mixle-mlops** owns serving/orchestration (gateway, accounts, RAG, the bridge components, the
+evolution worker). The mixle math always upstreams to the core. See `ARCHITECTURE.md`.
+
+> Requires `mixle.evolve` (currently on the mixle `evolve` branch) for the self-evolution routes.

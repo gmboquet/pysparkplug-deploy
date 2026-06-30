@@ -7,6 +7,8 @@ import type {
   ConversationDetail,
   ConversationSummary,
   DatasetArtifact,
+  EvolutionRun,
+  EvolvePolicy,
   ExportFormat,
   GeneratedImage,
   ModelInfo,
@@ -211,12 +213,37 @@ export function toWireMessages(
   });
 }
 
+// Cascade router config (chat.py reads extra.cascade={frontier, threshold, n}):
+// answer locally when self-consistent enough, else escalate to a frontier model.
+export interface CascadeConfig {
+  frontier: string;
+  threshold?: number;
+  n?: number;
+}
+
+// Mixture-of-Agents config (chat.py reads extra.moa={proposers, aggregator, layers}):
+// several models propose, an aggregator synthesizes the final answer.
+export interface MoaConfig {
+  proposers: string[];
+  aggregator: string;
+  layers?: number;
+}
+
 // Backend-specific passthrough options forwarded as the request's `extra` object.
 // `rag` opts into document/conversation retrieval augmentation; `conversation_id`
 // threads turns into a persisted conversation (chat.py reads both off `req.extra`).
+// The advanced strategies below are all opt-in and non-streaming (see chat.py):
+//   agent      → server-side tool/agent loop
+//   best_of_n  → self-consistency sampling (response sets X-Self-Consistency)
+//   cascade    → local→frontier escalation (response sets X-Cascade-Escalated)
+//   moa        → mixture-of-agents ensemble
 export interface ChatExtra {
   rag?: boolean;
   conversation_id?: string;
+  agent?: boolean;
+  best_of_n?: number;
+  cascade?: CascadeConfig;
+  moa?: MoaConfig;
   [key: string]: unknown;
 }
 
@@ -275,6 +302,115 @@ export async function streamChat(
       }
     }
   }
+}
+
+// Headers the advanced (non-streaming) strategies surface on the chat response.
+//   selfConsistency  → X-Self-Consistency: best-of-N / cascade local confidence (0..1)
+//   cascadeEscalated  → X-Cascade-Escalated: "1" escalated to frontier, "0" answered locally
+//   conversationId    → X-Conversation-Id: the persisted conversation this turn threaded into
+export interface CompletionHeaders {
+  selfConsistency: number | null;
+  cascadeEscalated: boolean | null;
+  conversationId: string | null;
+}
+
+export interface CompletionResult {
+  completion: ChatCompletion;
+  headers: CompletionHeaders;
+}
+
+// Minimal view of the OpenAI-compatible non-streaming chat completion we consume.
+export interface ChatCompletion {
+  id?: string;
+  model?: string;
+  choices?: {
+    index?: number;
+    message?: { role?: string; content?: string | null };
+    finish_reason?: string | null;
+  }[];
+}
+
+// Non-streaming chat completion. Used for the advanced strategies (agent, best_of_n,
+// cascade, moa) which chat.py handles non-streaming; returns the JSON plus the relevant
+// response headers (X-Self-Consistency / X-Cascade-Escalated / X-Conversation-Id).
+export async function chatCompletion(
+  token: string | null,
+  model: string,
+  messages: OpenAIMessage[],
+  extra?: ChatExtra,
+  signal?: AbortSignal
+): Promise<CompletionResult> {
+  const body: Record<string, unknown> = { model, messages, stream: false };
+  if (extra && Object.keys(extra).length > 0) body.extra = extra;
+  const res = await fetch(`${API_BASE}/v1/chat/completions`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...authHeaders(token) },
+    body: JSON.stringify(body),
+    signal,
+  });
+  const completion = await jsonOrThrow<ChatCompletion>(res);
+  const sc = res.headers.get("X-Self-Consistency");
+  const esc = res.headers.get("X-Cascade-Escalated");
+  return {
+    completion,
+    headers: {
+      selfConsistency: sc !== null ? Number(sc) : null,
+      cascadeEscalated: esc !== null ? esc === "1" : null,
+      conversationId: res.headers.get("X-Conversation-Id"),
+    },
+  };
+}
+
+// --- self-evolution (admin) ---
+
+export async function triggerEvolution(
+  token: string,
+  modelId: string,
+  policy: EvolvePolicy,
+  opts: { records?: unknown[]; promote?: boolean } = {}
+): Promise<EvolutionRun> {
+  const res = await fetch(`${API_BASE}/v1/evolve/${modelId}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...authHeaders(token) },
+    body: JSON.stringify({
+      records: opts.records ?? [],
+      policy,
+      promote: opts.promote ?? true,
+    }),
+  });
+  return jsonOrThrow<EvolutionRun>(res);
+}
+
+export async function listEvolutionRuns(
+  token: string,
+  modelId: string
+): Promise<EvolutionRun[]> {
+  const res = await fetch(`${API_BASE}/v1/evolve/${modelId}/runs`, {
+    headers: authHeaders(token),
+  });
+  const body = await jsonOrThrow<{ data: EvolutionRun[] }>(res);
+  return body.data ?? [];
+}
+
+export async function getEvolutionRun(
+  token: string,
+  runId: string
+): Promise<EvolutionRun> {
+  const res = await fetch(`${API_BASE}/v1/evolve/runs/${runId}`, {
+    headers: authHeaders(token),
+  });
+  return jsonOrThrow<EvolutionRun>(res);
+}
+
+export async function rollbackEvolution(
+  token: string,
+  modelId: string
+): Promise<{ model_id: string; rolled_back: boolean }> {
+  const res = await fetch(`${API_BASE}/v1/evolve/${modelId}/rollback`, {
+    method: "POST",
+    headers: authHeaders(token),
+  });
+  return jsonOrThrow<{ model_id: string; rolled_back: boolean }>(res);
 }
 
 // Resolve a gateway-relative path (e.g. "/v1/files/abc/content") against API_BASE.

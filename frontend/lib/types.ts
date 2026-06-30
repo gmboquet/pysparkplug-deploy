@@ -118,6 +118,41 @@ export interface GeneratedImage {
   b64_json?: string;
 }
 
+// --- Wave 3: advanced inference strategies + self-evolution ---
+
+// Objectives the self-evolution policy can optimize (evolve/policy.py OBJECTIVES).
+export type EvolveObjective =
+  | "nll"
+  | "log_score"
+  | "crps"
+  | "interval"
+  | "calibration";
+
+// One self-evolution run (evolve/models.py EvolutionRecord.to_dict).
+export interface EvolutionRun {
+  id: string;
+  model_id?: string;
+  objective: string;
+  operator: string | null;
+  verified: boolean;
+  promoted: boolean;
+  delta: number;
+  n_data?: number;
+  verdict: Record<string, unknown> | null;
+  error: string | null;
+  created_at: string;
+}
+
+// The serving-side knob set for an evolution run (evolve/policy.py EvolutionPolicy).
+export interface EvolvePolicy {
+  objective: EvolveObjective;
+  alpha?: number;
+  min_effect?: number;
+  holdout?: number;
+  operators?: string[] | null;
+  approval?: "none" | "required";
+}
+
 // A generated dataset artifact (datasets/models.py DatasetArtifact.to_dict).
 export interface DatasetArtifact {
   id: string;

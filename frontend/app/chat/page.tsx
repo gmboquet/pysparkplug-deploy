@@ -32,6 +32,21 @@ export default function ChatPage() {
   const [banner, setBanner] = useState<string | null>(null);
   const [useRag, setUseRag] = useState(false);
 
+  // --- advanced inference strategies (all opt-in passthrough `extra.*` options the
+  // gateway reads; each is non-streaming, so enabling any one routes through the
+  // non-streaming completion endpoint instead of streamChat). ---
+  const [advancedOpen, setAdvancedOpen] = useState(false);
+  const [agentMode, setAgentMode] = useState(false);
+  const [bestOfN, setBestOfN] = useState(1);
+  const [cascadeOn, setCascadeOn] = useState(false);
+  const [cascadeFrontier, setCascadeFrontier] = useState("");
+  const [cascadeThreshold, setCascadeThreshold] = useState(0.6);
+  const [moaOn, setMoaOn] = useState(false);
+  const [moaProposers, setMoaProposers] = useState<string[]>([]);
+  const [moaAggregator, setMoaAggregator] = useState("");
+  // Per-strategy result surfaced under the latest assistant turn.
+  const [lastInfo, setLastInfo] = useState<api.CompletionHeaders | null>(null);
+
   const abortRef = useRef<AbortController | null>(null);
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const fileRef = useRef<HTMLInputElement | null>(null);
@@ -62,6 +77,47 @@ export default function ChatPage() {
   const selectedModel =
     models.find((m) => m.id === model) ?? (model ? { id: model } : undefined);
 
+  // The advanced strategies require auth (the gateway gates conversation/RAG/agent
+  // tooling on a real user). A strategy is "active" only when its toggle is on AND
+  // its required inputs are present (e.g. cascade needs a frontier, moa needs both
+  // proposers and an aggregator) — otherwise we leave the default chat path alone.
+  const cascadeReady = cascadeOn && !!cascadeFrontier;
+  const moaReady = moaOn && moaProposers.length > 0 && !!moaAggregator;
+  const anyAdvanced =
+    !!token &&
+    (agentMode || bestOfN > 1 || cascadeReady || moaReady);
+
+  // Build the `extra` passthrough for a turn, layering in whichever advanced
+  // strategies are active. Only one branch is needed by the gateway, but it picks
+  // the first it sees; we keep the set minimal to avoid surprising precedence.
+  const buildExtra = useCallback((): api.ChatExtra => {
+    const extra: api.ChatExtra = {};
+    if (token && useRag) extra.rag = true;
+    if (token && conversationRef.current) {
+      extra.conversation_id = conversationRef.current;
+    }
+    if (token) {
+      if (agentMode) extra.agent = true;
+      else if (cascadeReady) {
+        extra.cascade = { frontier: cascadeFrontier, threshold: cascadeThreshold };
+      } else if (moaReady) {
+        extra.moa = { proposers: moaProposers, aggregator: moaAggregator };
+      } else if (bestOfN > 1) extra.best_of_n = bestOfN;
+    }
+    return extra;
+  }, [
+    token,
+    useRag,
+    agentMode,
+    cascadeReady,
+    cascadeFrontier,
+    cascadeThreshold,
+    moaReady,
+    moaProposers,
+    moaAggregator,
+    bestOfN,
+  ]);
+
   // --- core: run a completion given the conversation up to (and including) the
   // user turn, appending a streaming assistant message. ---
   const runCompletion = useCallback(
@@ -80,6 +136,7 @@ export default function ChatPage() {
       ]);
       setStreaming(true);
       setBanner(null);
+      setLastInfo(null);
 
       const controller = new AbortController();
       abortRef.current = controller;
@@ -92,12 +149,46 @@ export default function ChatPage() {
         }))
       );
 
-      // Optional pipeline controls (both are passthrough `extra` options the gateway
-      // reads off the chat request). Only sent for authenticated callers.
-      const extra: api.ChatExtra = {};
-      if (token && useRag) extra.rag = true;
-      if (token && conversationRef.current) {
-        extra.conversation_id = conversationRef.current;
+      const extra = buildExtra();
+
+      // Advanced strategies (agent / best_of_n / cascade / moa) are non-streaming on
+      // the gateway, so when any is active we hit the non-streaming endpoint and render
+      // the single result, surfacing its X-* headers as badges. Otherwise stream.
+      if (anyAdvanced) {
+        try {
+          const { completion, headers } = await api.chatCompletion(
+            token,
+            model,
+            wire,
+            extra,
+            controller.signal
+          );
+          const text = completion.choices?.[0]?.message?.content ?? "";
+          setMessages((prev) =>
+            prev.map((m) =>
+              m.id === assistantId
+                ? { ...m, content: text, pending: false }
+                : m
+            )
+          );
+          setLastInfo(headers);
+          if (headers.conversationId) {
+            conversationRef.current = headers.conversationId;
+          }
+        } catch (err) {
+          if ((err as Error)?.name !== "AbortError") {
+            setBanner(err instanceof Error ? err.message : "completion failed");
+          }
+          setMessages((prev) =>
+            prev.map((m) =>
+              m.id === assistantId ? { ...m, pending: false } : m
+            )
+          );
+        } finally {
+          setStreaming(false);
+          abortRef.current = null;
+        }
+        return;
       }
 
       let acc = "";
@@ -143,7 +234,7 @@ export default function ChatPage() {
         }
       }
     },
-    [model, token, useRag]
+    [model, token, anyAdvanced, buildExtra]
   );
 
   async function onSend() {
@@ -285,11 +376,31 @@ export default function ChatPage() {
               Use my documents (RAG)
             </label>
           )}
+          {token && (
+            <button
+              onClick={() => setAdvancedOpen((v) => !v)}
+              className={`${
+                token ? "" : "ml-auto "
+              }flex items-center gap-1 rounded-md px-2 py-1 text-xs ${
+                anyAdvanced
+                  ? "text-accent"
+                  : "text-muted hover:bg-surface-2 hover:text-fg"
+              }`}
+              title="Advanced inference strategies (agent, best-of-N, cascade, mixture-of-agents)"
+            >
+              Advanced
+              {anyAdvanced && (
+                <span className="grid h-1.5 w-1.5 place-items-center rounded-full bg-accent" />
+              )}
+              <span className="text-[10px]">{advancedOpen ? "▴" : "▾"}</span>
+            </button>
+          )}
           {messages.length > 0 && (
             <button
               onClick={() => {
                 setMessages([]);
                 conversationRef.current = null;
+                setLastInfo(null);
               }}
               className={`${
                 token ? "" : "ml-auto "
@@ -299,6 +410,192 @@ export default function ChatPage() {
             </button>
           )}
         </div>
+
+        {/* advanced inference strategies panel */}
+        {token && advancedOpen && (
+          <div className="mx-auto mt-2 max-w-3xl rounded-xl border border-border bg-surface p-3 text-sm">
+            <div className="grid gap-3 sm:grid-cols-2">
+              {/* agent mode */}
+              <div className="flex flex-col gap-1 rounded-lg border border-border bg-surface-2 p-3">
+                <label className="flex cursor-pointer items-center gap-2 font-medium">
+                  <input
+                    type="checkbox"
+                    checked={agentMode}
+                    onChange={(e) => setAgentMode(e.target.checked)}
+                    className="accent-accent"
+                  />
+                  Agent mode
+                </label>
+                <p className="text-xs text-muted">
+                  Let the model use the platform&apos;s tools (RAG, mixle
+                  decide/predict) in a server-side loop.
+                </p>
+              </div>
+
+              {/* best-of-N */}
+              <div className="flex flex-col gap-1 rounded-lg border border-border bg-surface-2 p-3">
+                <label className="flex items-center justify-between gap-2 font-medium">
+                  Best-of-N
+                  <input
+                    type="number"
+                    min={1}
+                    max={10}
+                    value={bestOfN}
+                    onChange={(e) =>
+                      setBestOfN(
+                        Math.max(1, Math.min(10, Number(e.target.value) || 1))
+                      )
+                    }
+                    className="w-16 rounded-lg border border-border bg-surface px-2 py-1 text-sm outline-none focus:border-accent"
+                  />
+                </label>
+                <p className="text-xs text-muted">
+                  Sample N answers and return the self-consistent majority with a
+                  calibrated confidence.
+                </p>
+              </div>
+
+              {/* cascade */}
+              <div className="flex flex-col gap-2 rounded-lg border border-border bg-surface-2 p-3">
+                <label className="flex cursor-pointer items-center gap-2 font-medium">
+                  <input
+                    type="checkbox"
+                    checked={cascadeOn}
+                    onChange={(e) => setCascadeOn(e.target.checked)}
+                    className="accent-accent"
+                  />
+                  Cascade
+                </label>
+                <p className="text-xs text-muted">
+                  Answer locally when confident; otherwise escalate to a frontier
+                  model.
+                </p>
+                {cascadeOn && (
+                  <div className="flex flex-col gap-2">
+                    <label className="flex flex-col gap-1 text-xs text-muted">
+                      Frontier model
+                      <select
+                        value={cascadeFrontier}
+                        onChange={(e) => setCascadeFrontier(e.target.value)}
+                        className="rounded-lg border border-border bg-surface px-2 py-1 text-sm text-fg outline-none focus:border-accent"
+                      >
+                        <option value="">(pick a frontier model)</option>
+                        {models
+                          .filter((m) => m.id !== model)
+                          .map((m) => (
+                            <option key={m.id} value={m.id}>
+                              {m.id}
+                            </option>
+                          ))}
+                      </select>
+                    </label>
+                    <label className="flex flex-col gap-1 text-xs text-muted">
+                      <span className="flex justify-between">
+                        Escalation threshold
+                        <span className="text-fg">
+                          {cascadeThreshold.toFixed(2)}
+                        </span>
+                      </span>
+                      <input
+                        type="range"
+                        min={0}
+                        max={1}
+                        step={0.05}
+                        value={cascadeThreshold}
+                        onChange={(e) =>
+                          setCascadeThreshold(Number(e.target.value))
+                        }
+                        className="accent-accent"
+                      />
+                    </label>
+                    {!cascadeFrontier && (
+                      <p className="text-xs text-amber-400">
+                        Pick a frontier model to enable cascade.
+                      </p>
+                    )}
+                  </div>
+                )}
+              </div>
+
+              {/* mixture-of-agents */}
+              <div className="flex flex-col gap-2 rounded-lg border border-border bg-surface-2 p-3">
+                <label className="flex cursor-pointer items-center gap-2 font-medium">
+                  <input
+                    type="checkbox"
+                    checked={moaOn}
+                    onChange={(e) => setMoaOn(e.target.checked)}
+                    className="accent-accent"
+                  />
+                  Mixture-of-Agents
+                </label>
+                <p className="text-xs text-muted">
+                  Several models propose; an aggregator synthesizes the final
+                  answer.
+                </p>
+                {moaOn && (
+                  <div className="flex flex-col gap-2">
+                    <div className="flex flex-col gap-1 text-xs text-muted">
+                      <span>Proposers</span>
+                      <div className="flex flex-wrap gap-1.5">
+                        {models.length === 0 && (
+                          <span className="text-muted">(no models)</span>
+                        )}
+                        {models.map((m) => {
+                          const on = moaProposers.includes(m.id);
+                          return (
+                            <button
+                              key={m.id}
+                              type="button"
+                              onClick={() =>
+                                setMoaProposers((cur) =>
+                                  on
+                                    ? cur.filter((x) => x !== m.id)
+                                    : [...cur, m.id]
+                                )
+                              }
+                              className={`rounded-full border px-2 py-0.5 text-[11px] ${
+                                on
+                                  ? "border-accent text-accent"
+                                  : "border-border text-muted hover:bg-surface"
+                              }`}
+                            >
+                              {m.id}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                    <label className="flex flex-col gap-1 text-xs text-muted">
+                      Aggregator
+                      <select
+                        value={moaAggregator}
+                        onChange={(e) => setMoaAggregator(e.target.value)}
+                        className="rounded-lg border border-border bg-surface px-2 py-1 text-sm text-fg outline-none focus:border-accent"
+                      >
+                        <option value="">(pick an aggregator)</option>
+                        {models.map((m) => (
+                          <option key={m.id} value={m.id}>
+                            {m.id}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    {!moaReady && (
+                      <p className="text-xs text-amber-400">
+                        Select at least one proposer and an aggregator.
+                      </p>
+                    )}
+                  </div>
+                )}
+              </div>
+            </div>
+            <p className="mt-3 text-[11px] text-muted">
+              These strategies are non-streaming — when one is active the reply
+              arrives as a single result. Agent mode takes precedence, then
+              cascade, then mixture-of-agents, then best-of-N.
+            </p>
+          </div>
+        )}
       </div>
 
       {/* message list */}
@@ -326,6 +623,34 @@ export default function ChatPage() {
           ))}
         </div>
       </div>
+
+      {/* advanced-strategy result badges (best-of-N confidence / cascade routing) */}
+      {lastInfo &&
+        (lastInfo.selfConsistency !== null ||
+          lastInfo.cascadeEscalated !== null) && (
+          <div className="mx-auto w-full max-w-3xl px-4">
+            <div className="mb-2 flex flex-wrap items-center gap-2 text-xs">
+              {lastInfo.selfConsistency !== null && (
+                <span
+                  className="rounded-full border border-accent/40 bg-accent/10 px-2 py-0.5 text-accent"
+                  title="Self-consistency confidence (X-Self-Consistency)"
+                >
+                  confidence {Math.round(lastInfo.selfConsistency * 100)}%
+                </span>
+              )}
+              {lastInfo.cascadeEscalated !== null && (
+                <span
+                  className="rounded-full border border-border bg-surface px-2 py-0.5 text-muted"
+                  title="Cascade routing (X-Cascade-Escalated)"
+                >
+                  {lastInfo.cascadeEscalated
+                    ? `escalated to ${cascadeFrontier || "frontier"}`
+                    : "answered locally"}
+                </span>
+              )}
+            </div>
+          </div>
+        )}
 
       {/* banner */}
       {banner && (
