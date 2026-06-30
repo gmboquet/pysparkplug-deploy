@@ -236,7 +236,10 @@ _DEVICE_PAGE = """<!doctype html>
  <div id="auth">
    <input id="email" type="email" placeholder="email" autocomplete="username"/>
    <input id="password" type="password" placeholder="password" autocomplete="current-password"/>
-   <button onclick="loginPassword()">Sign in &amp; approve</button>
+   <button id="primary" onclick="submitAuth()">Sign in &amp; approve</button>
+   <div style="margin-top:10px;font-size:13px;text-align:center">
+     <a href="#" id="toggle" onclick="toggleMode(event)">Create an account</a>
+   </div>
    <div class="oauth" id="oauth"></div>
  </div>
  <div class="msg" id="msg"></div>
@@ -255,12 +258,28 @@ async function approve(token){
     msg("✓ Approved. You can return to your terminal.", true); }
   else { const e=await r.json().catch(()=>({})); msg("Could not approve: "+(e.detail||r.status), false); }
 }
-async function loginPassword(){
-  const email=document.getElementById("email").value, password=document.getElementById("password").value;
-  const r = await fetch("/auth/login",{method:"POST",headers:{"content-type":"application/json"},
+let mode = "login";
+function toggleMode(e){
+  e.preventDefault();
+  mode = mode === "login" ? "signup" : "login";
+  document.getElementById("primary").textContent =
+    mode === "login" ? "Sign in & approve" : "Create account & approve";
+  document.getElementById("toggle").textContent =
+    mode === "login" ? "Create an account" : "I already have an account";
+  msg("", true);
+}
+async function submitAuth(){
+  const email=document.getElementById("email").value.trim(), password=document.getElementById("password").value;
+  if(!email || !password){ msg("Enter an email and password.", false); return; }
+  const path = mode === "signup" ? "/auth/signup" : "/auth/login";
+  const r = await fetch(path,{method:"POST",headers:{"content-type":"application/json"},
     body:JSON.stringify({email,password})});
-  if(!r.ok){ msg("Invalid email or password.", false); return; }
-  const d = await r.json(); await approve(d.token);
+  if(!r.ok){
+    const e = await r.json().catch(()=>({}));
+    msg(mode === "signup" ? ("Could not create account: " + (e.detail||r.status)) : "Invalid email or password.", false);
+    return;
+  }
+  const d = await r.json(); await approve(d.token || d.api_key);
 }
 async function loadProviders(){
   try{ const d = await (await fetch("/auth/providers")).json();

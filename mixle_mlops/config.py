@@ -64,6 +64,7 @@ class Settings(BaseSettings):
 
     # --- OAuth / OIDC sign-in ("Sign in with Google / Apple") ---
     public_url: str = "http://localhost:8000"        # base URL of this gateway (OAuth redirect + device verification)
+    oauth_web_origin: str = ""                       # extra trusted origin (the web app) allowed as an OAuth redirect target
     oauth_device_ttl: int = 600                      # seconds a device code stays valid
     oauth_state_ttl: int = 600                       # seconds an OAuth state token stays valid
     # Google

@@ -138,14 +138,20 @@ def is_allowed_redirect(redirect_to: str | None, settings: Settings | None = Non
         return True  # same-origin relative path
     s = settings or get_settings()
     try:
-        u, pub = urlparse(redirect_to), urlparse(s.public_url)
+        u = urlparse(redirect_to)
     except ValueError:
         return False
-    return u.scheme in ("http", "https") and (u.scheme, u.hostname, u.port) == (
-        pub.scheme,
-        pub.hostname,
-        pub.port,
-    )
+    if u.scheme not in ("http", "https"):
+        return False
+    target = (u.scheme, u.hostname, u.port)
+    allowed = [s.public_url]
+    if s.oauth_web_origin:
+        allowed.append(s.oauth_web_origin)
+    for origin in allowed:
+        o = urlparse(origin)
+        if target == (o.scheme, o.hostname, o.port):
+            return True
+    return False
 
 
 def authorization_url(
