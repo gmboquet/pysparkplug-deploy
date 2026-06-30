@@ -62,6 +62,13 @@ class Settings(BaseSettings):
     s3_bucket: str | None = None
     s3_endpoint: str | None = None
 
+    # --- training compute (vast.ai GPU rental) ---
+    vast_api_key: str = ""                            # from cloud.vast.ai/manage-keys
+    vast_default_gpu: str = "RTX_4090"               # gpu_name filter for offer search
+    vast_default_image: str = "pytorch/pytorch:2.3.1-cuda12.1-cudnn8-runtime"
+    vast_max_price: float = 1.5                       # $/hr cap when picking an offer
+    vast_default_disk: int = 40                       # GB
+
     # --- OAuth / OIDC sign-in ("Sign in with Google / Apple") ---
     public_url: str = "http://localhost:8000"        # base URL of this gateway (OAuth redirect + device verification)
     oauth_web_origin: str = ""                       # extra trusted origin (the web app) allowed as an OAuth redirect target

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import os
 
 from .config import get_settings
@@ -30,6 +31,27 @@ def main(argv: list[str] | None = None) -> None:
     ic.add_argument("provider", choices=["aws", "azure", "gcp", "alicloud", "local"])
     ic.add_argument("--dest", default=".env")
     ic.add_argument("--force", action="store_true", help="overwrite an existing .env")
+
+    tr = sub.add_parser("train", help="train a mixle model or fine-tune an LLM on a rented vast.ai GPU")
+    tr.add_argument("name", help="model/run name")
+    tr.add_argument("--backend", choices=["mixle", "llm"], default="mixle")
+    tr.add_argument("--mode", choices=["ssh", "onstart"], default="ssh")
+    tr.add_argument("--workdir", help="local dir to upload (mixle backend, ssh mode)")
+    tr.add_argument("--repo", help="git URL to clone (mixle backend, onstart mode)")
+    tr.add_argument("--script", help="training entry script (mixle backend)")
+    tr.add_argument("--dataset", help="jsonl path (ssh) or HF dataset id / URL (onstart)")
+    tr.add_argument("--base-model", dest="base_model", help="HF model id (llm backend)")
+    tr.add_argument("--epochs", type=float, default=1.0)
+    tr.add_argument("--qlora", action="store_true", help="4-bit QLoRA (llm backend)")
+    tr.add_argument("--gpu", default=None, help="GPU name filter, e.g. RTX_4090")
+    tr.add_argument("--num-gpus", dest="num_gpus", type=int, default=1)
+    tr.add_argument("--max-price", dest="max_price", type=float, default=None, help="$/hr cap")
+    tr.add_argument("--disk", type=int, default=None, help="disk GB")
+    tr.add_argument("--image", default=None, help="docker image override")
+    tr.add_argument("--no-register", dest="register", action="store_false")
+    tr.add_argument("--no-dry-run", dest="dry_run", action="store_false", help="actually rent a GPU and train")
+    tr.add_argument("--s3-dest", dest="s3_dest", default=None, help="object-store URL for onstart artifacts")
+
     args = parser.parse_args(argv)
 
     if args.cmd == "serve":
@@ -57,3 +79,39 @@ def main(argv: list[str] | None = None) -> None:
         path = init_cloud(args.provider, dest=args.dest, overwrite=args.force)
         print(f"wrote {path}")
         print(next_steps(args.provider))
+    elif args.cmd == "train":
+        from .compute import TrainingJob, launch
+        from .config import get_settings
+
+        s = get_settings()
+        job = TrainingJob(
+            name=args.name,
+            backend=args.backend,
+            mode=args.mode,
+            workdir=args.workdir,
+            repo=args.repo,
+            script=args.script,
+            dataset=args.dataset,
+            base_model=args.base_model,
+            epochs=args.epochs,
+            qlora=args.qlora,
+            gpu=args.gpu or s.vast_default_gpu,
+            num_gpus=args.num_gpus,
+            max_price=args.max_price if args.max_price is not None else s.vast_max_price,
+            disk=args.disk if args.disk is not None else s.vast_default_disk,
+            image=args.image,
+            register=args.register,
+        )
+        result = launch(
+            job,
+            api_key=s.vast_api_key,
+            dry_run=args.dry_run,
+            registry_root=str(s.registry_root),
+            s3_dest=args.s3_dest,
+        )
+        if not args.dry_run:
+            print(json.dumps(result, indent=2, default=str))
+
+
+if __name__ == "__main__":
+    main()
