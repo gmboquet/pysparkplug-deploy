@@ -159,11 +159,26 @@ async def chat_completions(req: ChatRequest, request: Request, response: Respons
         except (TypeError, ValueError):
             n = 0
         if n > 1:
+            temp = req.temperature if req.temperature is not None else 0.8
+            # with a real verifier (exact-match / computed-reference / LLM-judge) selection beats majority voting
+            verifier_spec = req.extra.get("verifier")
+            if isinstance(verifier_spec, dict):
+                from ..verifiers import best_of_n_verified, build_verifier
+
+                verifier = build_verifier(verifier_spec, registry)
+                if verifier is not None:
+                    completion, info = await best_of_n_verified(adapter, req, n=n, verifier=verifier, temperature=temp)
+                    response.headers["X-Verifier-Score"] = f"{info.get('best_score', 0):.3f}"
+                    cid = _persist(user, req, name, completion.choices[0].message.text() if completion.choices else "")
+                    if cid:
+                        response.headers["X-Conversation-Id"] = cid
+                    return completion
+
             from ..bestofn import best_of_n
 
             completion, info = await best_of_n(adapter, req, n=n,
                                                selector=str(req.extra.get("select", "self_consistency")),
-                                               temperature=req.temperature if req.temperature is not None else 0.8)
+                                               temperature=temp)
             conf = info.get("confidence")
             if conf is not None:
                 response.headers["X-Self-Consistency"] = f"{conf:.3f}"
@@ -184,11 +199,26 @@ async def chat_completions(req: ChatRequest, request: Request, response: Respons
 
             completion, info = await mixture_of_agents(
                 [registry.get(m) for m in proposer_ids], registry.get(aggregator_id), req,
-                layers=int(moa.get("layers", 1)))
+                layers=int(moa.get("layers", 1)), select_k=moa.get("select_k"))
             cid = _persist(user, req, name, completion.choices[0].message.text() if completion.choices else "")
             if cid:
                 response.headers["X-Conversation-Id"] = cid
             return completion
+
+    # 4d. constrained / structured decoding (opt-in via extra.constrained = the schema/grammar spec): pass the
+    #     constraint to the backend's guided decoder + validate + repair-retry until the output conforms.
+    cspec = req.extra.get("constrained")
+    if isinstance(cspec, dict) and not req.stream:
+        from ..constrained import constrained_complete
+
+        completion, info = await constrained_complete(adapter, req, cspec)
+        response.headers["X-Constrained-Valid"] = "1" if info["valid"] else "0"
+        if info.get("repairs"):
+            response.headers["X-Constrained-Repairs"] = str(info["repairs"])
+        cid = _persist(user, req, name, completion.choices[0].message.text() if completion.choices else "")
+        if cid:
+            response.headers["X-Conversation-Id"] = cid
+        return completion
 
     # 5. response cache (opt-in via MIXLE_ENABLE_RESPONSE_CACHE), exact-match, non-streaming, non-tool only
     rc = None
