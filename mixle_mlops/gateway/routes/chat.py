@@ -156,6 +156,23 @@ async def chat_completions(req: ChatRequest, request: Request, response: Respons
                 response.headers["X-Conversation-Id"] = cid
             return completion
 
+    # 4c. Mixture-of-Agents (opt-in via extra.moa={proposers:[...], aggregator, layers}): several models propose,
+    #     an aggregator synthesizes — the ensemble lever for a heterogeneous local fleet.
+    moa = req.extra.get("moa")
+    if isinstance(moa, dict) and not req.stream:
+        proposer_ids = [m for m in (moa.get("proposers") or []) if registry.has(m)]
+        aggregator_id = moa.get("aggregator") or name
+        if proposer_ids and registry.has(aggregator_id):
+            from ..moa import mixture_of_agents
+
+            completion, info = await mixture_of_agents(
+                [registry.get(m) for m in proposer_ids], registry.get(aggregator_id), req,
+                layers=int(moa.get("layers", 1)))
+            cid = _persist(user, req, name, completion.choices[0].message.text() if completion.choices else "")
+            if cid:
+                response.headers["X-Conversation-Id"] = cid
+            return completion
+
     # 5. response cache (opt-in via MIXLE_ENABLE_RESPONSE_CACHE), exact-match, non-streaming, non-tool only
     rc = None
     if settings.enable_response_cache and not req.stream and not req.tools:
