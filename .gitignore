@@ -8,3 +8,9 @@ models/
 .ruff_cache/
 .pytest_cache/
 .DS_Store
+.env
+mixle_data/
+*.db
+node_modules/
+frontend/.next/
+frontend/out/

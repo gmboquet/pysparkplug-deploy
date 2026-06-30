@@ -5,25 +5,31 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "mixle-mlops"
 version = "0.1.0"
-description = "Container / Kubernetes serving layer for mixle models (FastAPI over ModelService)."
+description = "All-in-one AI platform: host mixle models + open LLMs behind one OpenAI-compatible gateway, with accounts, API keys, multimodal, MCP, a chat UI, and a principled (mixle-powered) RLHF feedback loop."
 readme = "README.md"
 requires-python = ">=3.10"
 license = "MIT"
 authors = [{ name = "Grant Boquet" }]
 dependencies = [
-    # The model primitives (ModelRegistry / ModelService / drift). Published on PyPI as `mixle`;
-    # until then install it from git (see README / Dockerfile).
+    # mixle core (the model primitives + the probabilistic differentiator). Published on PyPI as `mixle`.
     "mixle>=0.2",
     "fastapi>=0.110",
     "uvicorn[standard]>=0.29",
     "pydantic>=2",
+    "pydantic-settings>=2",
+    "httpx>=0.27",          # proxy to OpenAI-compatible LLM backends (vLLM / Ollama / llama.cpp / hosted)
+    "sqlmodel>=0.0.16",     # accounts / keys / registry / conversations / feedback storage
+    "python-multipart>=0.0.9",  # multimodal file uploads
 ]
 
 [project.optional-dependencies]
-dev = ["ruff==0.15.17", "httpx>=0.27", "pytest>=8"]
+dev = ["ruff==0.15.17", "pytest>=8", "pytest-asyncio>=0.23"]
+cloud = ["psycopg[binary]>=3.1", "boto3>=1.34"]   # Postgres + S3 cloud backends
+mcp = ["mcp>=1.0"]                                 # MCP server/client
 
 [project.scripts]
-mixle-serve = "mixle_mlops.app:main"
+mixle-serve = "mixle_mlops.cli:serve"             # run the platform gateway
+mixle-mlops = "mixle_mlops.cli:main"              # admin CLI (init-db, create-user, ...)
 mixle-seed = "mixle_mlops.seed_registry:main"
 mixle-drift-retrain = "mixle_mlops.drift_retrain:main"
 
