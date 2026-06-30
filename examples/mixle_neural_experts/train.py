@@ -56,6 +56,10 @@ def main() -> None:
     p.add_argument("--em-iters", dest="em_iters", type=int, default=15)
     a = p.parse_args()
 
+    cuda = torch.cuda.is_available()
+    dev = "cuda:" + torch.cuda.get_device_name(0) if cuda else "cpu"
+    print(f"torch {torch.__version__} | device: {dev}")  # NeuralLeaf auto-uses CUDA when present
+
     data, x = synthetic()  # (a --dataset loader would slot in here)
     print(f"training a mixture of {a.experts} neural experts on {len(data)} points "
           f"({a.restarts} restarts x {a.em_iters} EM iters)")
@@ -72,8 +76,15 @@ def main() -> None:
             best_model, best_header = model, header
     assert best_model is not None and best_header is not None
 
+    used = next(best_model.components[0].module.parameters()).device
+    print(f"trained on device: {used}")
+
     # The trained artifact IS the mixle model. mixle's JSON registry can't store torch-backed leaves,
     # so neural models are persisted with pickle + a JSON provenance summary from the fit header.
+    # Move the expert modules to CPU first so the pickle loads on any machine (not just a GPU box).
+    for c in best_model.components:
+        c.module.to("cpu")
+        c.device = "cpu"
     out = Path(a.output)
     out.mkdir(parents=True, exist_ok=True)
     with open(out / "model.pkl", "wb") as f:
