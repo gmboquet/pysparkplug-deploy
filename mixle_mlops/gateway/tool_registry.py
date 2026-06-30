@@ -74,6 +74,22 @@ class ToolRegistry:
                         "actions": {"type": "array", "items": {}},
                     }, "required": ["model", "records"]})),
                 self._mixle_decide)
+            self._add(
+                ToolDef(function=FunctionDef(
+                    name="mixle_solve",
+                    description="Offload an EXACT computation to mixle's deterministic solver instead of computing "
+                                "by hand. ops: 'eval' (arithmetic expression with vars), 'normal_prob' (Gaussian "
+                                "tail probability), 'describe' (exact summary stats of data), 'fit_predict' "
+                                "(auto-fit a distribution and read off mean/quantile).",
+                    parameters={"type": "object", "properties": {
+                        "op": {"type": "string", "enum": ["eval", "normal_prob", "describe", "fit_predict"]},
+                        "expr": {"type": "string"}, "vars": {"type": "object"},
+                        "mean": {"type": "number"}, "std": {"type": "number"}, "x": {"type": "number"},
+                        "side": {"type": "string", "enum": ["upper", "lower"]},
+                        "data": {"type": "array", "items": {"type": "number"}},
+                        "query": {"type": "string"}, "q": {"type": "number"},
+                    }, "required": ["op"]})),
+                self._mixle_solve)
 
     # --- public surface ---
     def specs(self) -> list[ToolDef]:
@@ -111,3 +127,8 @@ class ToolRegistry:
         adapter = self.registry.get(args["model"])
         opts = {k: v for k, v in args.items() if k in ("loss", "actions")}
         return await adapter.decide(args.get("records") or [], **opts)
+
+    async def _mixle_solve(self, args: dict[str, Any]) -> Any:
+        from .program_offload import solve_program
+
+        return solve_program(args)
