@@ -10,9 +10,10 @@ from mixle_mlops.compute.vast import VastClient
 def test_offer_query_shape():
     q = VastClient.build_query(gpu_name="RTX_4090", num_gpus=2, max_price=1.2, limit=10)
     assert q["gpu_name"] == {"in": ["RTX 4090"]}  # underscore -> space
-    assert q["num_gpus"] == {"gte": 2}
+    assert q["num_gpus"] == {"eq": 2}  # exact count, not gte
     assert q["dph_total"] == {"lte": 1.2}
     assert q["rentable"] == {"eq": True}
+    assert q["reliability2"] == {"gte": 0.95}  # filter out flaky hosts
 
 
 def test_validate():

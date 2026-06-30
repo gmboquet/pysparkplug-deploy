@@ -23,6 +23,7 @@ class Offer:
     gpu_name: str
     num_gpus: int
     price: float  # $/hr (dph_total)
+    reliability: float = 0.0  # vast reliability2 score in [0,1] — flaky cheap hosts score low
     raw: dict = field(default_factory=dict)
 
 
@@ -47,12 +48,19 @@ class VastClient:
             return {}
 
     @staticmethod
-    def build_query(*, gpu_name: str | None, num_gpus: int, max_price: float | None, limit: int) -> dict:
-        """The offer-search filter body (exposed for testing/dry-run)."""
+    def build_query(
+        *, gpu_name: str | None, num_gpus: int, max_price: float | None, limit: int, min_reliability: float = 0.95
+    ) -> dict:
+        """The offer-search filter body (exposed for testing/dry-run).
+
+        Filters to exactly ``num_gpus`` GPUs (so a 1-GPU job doesn't rent a pricier multi-GPU box) and to
+        reliable hosts (``reliability2 >= min_reliability``) — the cheapest offers are often flaky hosts
+        that never leave "loading"."""
         q: dict = {
             "rentable": {"eq": True},
-            "num_gpus": {"gte": num_gpus},
+            "num_gpus": {"eq": num_gpus},
             "type": "ondemand",
+            "reliability2": {"gte": min_reliability},
             "order": [["dph_total", "asc"]],
             "limit": limit,
         }
@@ -63,10 +71,11 @@ class VastClient:
         return q
 
     def search_offers(
-        self, *, gpu_name: str | None = None, num_gpus: int = 1, max_price: float | None = None, limit: int = 20
+        self, *, gpu_name: str | None = None, num_gpus: int = 1, max_price: float | None = None, limit: int = 20,
+        min_reliability: float = 0.95,
     ) -> list[Offer]:
         data = self._request("POST", "/bundles/", json=self.build_query(
-            gpu_name=gpu_name, num_gpus=num_gpus, max_price=max_price, limit=limit))
+            gpu_name=gpu_name, num_gpus=num_gpus, max_price=max_price, limit=limit, min_reliability=min_reliability))
         offers: list[Offer] = []
         for o in data.get("offers", []):
             offers.append(
@@ -75,6 +84,7 @@ class VastClient:
                     gpu_name=str(o.get("gpu_name", "")),
                     num_gpus=int(o.get("num_gpus", 0)),
                     price=float(o.get("dph_total") or 0.0),
+                    reliability=float(o.get("reliability2") or 0.0),
                     raw=o,
                 )
             )

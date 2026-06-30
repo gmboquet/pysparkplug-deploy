@@ -119,8 +119,12 @@ def launch(
     # --- ssh mode: try offers until one provisions AND becomes reachable (stale offers 400; dud hosts
     # never leave "loading"). Each failed box is destroyed before the next attempt so nothing leaks. ---
     errors: list = []
-    for offer in offers[: max(1, job.provision_attempts)]:
-        on_log(f"renting offer {offer.id}: {offer.gpu_name} x{offer.num_gpus} @ ${offer.price:.3f}/hr")
+    boot_attempts = 0
+    for offer in offers:
+        if boot_attempts >= max(1, job.provision_attempts):
+            break
+        on_log(f"renting offer {offer.id}: {offer.gpu_name} x{offer.num_gpus} @ ${offer.price:.3f}/hr "
+               f"(reliability {offer.reliability:.2f})")
         try:
             instance_id = client.create_instance(
                 offer.id, image=p["image"], disk=job.disk, runtype="ssh_direct", label=job.name
@@ -128,7 +132,8 @@ def launch(
         except VastError as e:
             on_log(f"  offer {offer.id} unavailable ({str(e)[:120]}); trying next …")
             errors.append(e)
-            continue
+            continue  # an instant stale-offer 400 does not count against the boot-attempt budget
+        boot_attempts += 1
         # Safety: a hard runtime cap. Even if a command hangs (so the finally never runs), this fires on a
         # background thread and destroys the box so a hung job can't quietly run up the bill.
         watchdog = threading.Timer(
@@ -154,7 +159,7 @@ def launch(
             watchdog.cancel()
             _safe_destroy(client, instance_id, on_log)
     raise VastError(
-        f"no offer became reachable after {min(len(offers), job.provision_attempts)} attempts; "
+        f"no offer became reachable after {boot_attempts} boot attempts; "
         f"last error: {errors[-1] if errors else 'none'}"
     )
 
