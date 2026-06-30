@@ -10,6 +10,7 @@ from fastapi.responses import StreamingResponse
 from ...accounts.models import User
 from ...config import get_settings
 from ...core.adapters import ChatRequest
+from ...multimodal.content import MultimodalError, normalize_messages
 from ..auth import current_user
 
 router = APIRouter()
@@ -22,6 +23,10 @@ async def chat_completions(req: ChatRequest, request: Request, user: User | None
     if not registry.has(name):
         raise HTTPException(status_code=404, detail=f"model {name!r} not found")
     adapter = registry.get(name)
+    try:                                              # resolve uploaded-file refs → image_url parts for vision LLMs
+        req.messages = normalize_messages(req.messages)
+    except MultimodalError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
 
     if req.stream:
         async def event_stream():

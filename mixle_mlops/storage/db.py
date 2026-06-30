@@ -21,7 +21,8 @@ def get_engine():
 
 
 def init_db() -> None:
-    from ..accounts import models as _models  # noqa: F401  (register tables)
+    from ..accounts import models as _accounts  # noqa: F401  (register tables)
+    from ..feedback import models as _feedback  # noqa: F401
     SQLModel.metadata.create_all(get_engine())
 
 

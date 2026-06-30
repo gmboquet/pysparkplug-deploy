@@ -23,6 +23,7 @@ class Settings(BaseSettings):
 
     # --- model registry ---
     registry_root: Path = Path("./mixle_data/registry")
+    enable_demo_models: bool = True                  # register a small fitted mixle model to demo the /v1/mixle routes
 
     # --- default LLM backend: any OpenAI-compatible server (Ollama :11434/v1, vLLM, llama.cpp, hosted) ---
     llm_base_url: str = "http://localhost:11434/v1"

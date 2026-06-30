@@ -10,8 +10,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from ..config import Settings, get_settings
 from ..core.registry import ModelRegistry
 from ..models import EchoAdapter, OpenAICompatAdapter
+from ..models.mixle_model import register_demo_mixle_model
 from ..storage.db import init_db
-from .routes import accounts, chat, models
+from .routes import accounts, chat, feedback, files, mcp, mixle, models
 
 
 def build_registry(settings: Settings) -> ModelRegistry:
@@ -20,6 +21,11 @@ def build_registry(settings: Settings) -> ModelRegistry:
     for model_id in settings.llm_models:                        # configured LLM backend models
         registry.register(OpenAICompatAdapter(model_id, base_url=settings.llm_base_url,
                                               api_key=settings.llm_api_key))
+    if settings.enable_demo_models:                             # a fitted mixle model demonstrating /v1/mixle
+        try:
+            register_demo_mixle_model(registry)
+        except Exception:                                       # never let a demo fit break startup
+            pass
     return registry
 
 
@@ -49,6 +55,10 @@ def create_app() -> FastAPI:
     app.include_router(accounts.router, tags=["accounts"])
     app.include_router(models.router, prefix="/v1", tags=["models"])
     app.include_router(chat.router, prefix="/v1", tags=["chat"])
+    app.include_router(mixle.router, prefix="/v1", tags=["mixle"])        # /v1/mixle/predict|score|decide|latent|capabilities
+    app.include_router(feedback.router, prefix="/v1", tags=["feedback"])  # /v1/feedback, /v1/rlhf/*
+    app.include_router(files.router, prefix="/v1", tags=["files"])        # /v1/files (multimodal uploads)
+    app.include_router(mcp.router, tags=["mcp"])                          # /mcp (JSON-RPC over HTTP)
     return app
 
 

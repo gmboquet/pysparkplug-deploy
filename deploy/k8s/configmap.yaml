@@ -1,0 +1,14 @@
+# Non-secret gateway configuration. Secrets (MIXLE_SECRET_KEY, MIXLE_DATABASE_URL) live in the Secret.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: mixle-gateway-config
+  labels: { app: mixle-gateway }
+data:
+  MIXLE_DEPLOYMENT: "local"            # set to "cloud" and supply MIXLE_DATABASE_URL via the Secret for Postgres
+  MIXLE_DATA_DIR: "/data"
+  MIXLE_REQUIRE_AUTH: "true"
+  MIXLE_LLM_BASE_URL: "http://mixle-ollama:11434/v1"
+  MIXLE_LLM_API_KEY: "ollama"
+  MIXLE_LLM_MODELS: '["llama3.2"]'
+  MIXLE_DEFAULT_MODEL: "echo"

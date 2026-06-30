@@ -1,0 +1,79 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+
+  --bg: #0b0d12;
+  --surface: #12151c;
+  --surface-2: #1a1f29;
+  --border: #262c38;
+  --fg: #e8eaf0;
+  --muted: #9aa3b2;
+  --accent: #6d5efc;
+  --accent-fg: #ffffff;
+}
+
+@media (prefers-color-scheme: light) {
+  :root {
+    --bg: #f7f8fb;
+    --surface: #ffffff;
+    --surface-2: #f0f2f7;
+    --border: #e2e6ee;
+    --fg: #15181f;
+    --muted: #5b6473;
+    --accent: #5a4af0;
+    --accent-fg: #ffffff;
+  }
+}
+
+html,
+body {
+  padding: 0;
+  margin: 0;
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+/* Thin scrollbars in the chat panes */
+.scroll-thin::-webkit-scrollbar {
+  width: 10px;
+}
+.scroll-thin::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 6px;
+  border: 3px solid transparent;
+  background-clip: padding-box;
+}
+
+/* Blinking caret while a response streams */
+.caret::after {
+  content: "▋";
+  margin-left: 1px;
+  opacity: 0.6;
+  animation: blink 1s steps(2, start) infinite;
+}
+@keyframes blink {
+  to {
+    visibility: hidden;
+  }
+}
+
+/* Preserve newlines/wrapping for assistant + user text */
+.msg-body {
+  white-space: pre-wrap;
+  word-break: break-word;
+  line-height: 1.6;
+}

@@ -1,0 +1,91 @@
+# mixle-mlops — local/dev stack for the platform gateway.
+#
+# Services:
+#   gateway   — the FastAPI platform gateway (mixle-serve), OpenAI-compatible API on :8000
+#   ollama    — the default LLM backend (any OpenAI-compatible server works; Ollama is the easy local one)
+#   postgres  — OPTIONAL cloud-mode database (only started with the `cloud` profile)
+#
+# Quick start:
+#   cp deploy/.env.example deploy/.env        # then edit MIXLE_SECRET_KEY etc.
+#   docker compose -f deploy/docker-compose.yml up -d gateway ollama
+#   docker compose -f deploy/docker-compose.yml exec ollama ollama pull llama3.2
+#   curl http://localhost:8000/v1/models
+#
+# Cloud mode (Postgres instead of SQLite):
+#   docker compose -f deploy/docker-compose.yml --profile cloud up -d
+#   (set MIXLE_DEPLOYMENT=cloud and MIXLE_DATABASE_URL in .env — see .env.example)
+
+services:
+  gateway:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+      args:
+        MIXLE_GIT: ${MIXLE_GIT:-git+https://github.com/gmboquet/mixle@main}
+    image: mixle-mlops:latest
+    restart: unless-stopped
+    ports:
+      - "${MIXLE_PORT:-8000}:8000"
+    environment:
+      # --- core platform ---
+      MIXLE_DEPLOYMENT: ${MIXLE_DEPLOYMENT:-local}
+      MIXLE_SECRET_KEY: ${MIXLE_SECRET_KEY:?set MIXLE_SECRET_KEY in deploy/.env}
+      MIXLE_DATA_DIR: /data
+      MIXLE_REQUIRE_AUTH: ${MIXLE_REQUIRE_AUTH:-true}
+      MIXLE_DATABASE_URL: ${MIXLE_DATABASE_URL:-}
+      # --- default LLM backend: Ollama, OpenAI-compatible at :11434/v1 ---
+      MIXLE_LLM_BASE_URL: ${MIXLE_LLM_BASE_URL:-http://ollama:11434/v1}
+      MIXLE_LLM_API_KEY: ${MIXLE_LLM_API_KEY:-ollama}
+      MIXLE_LLM_MODELS: ${MIXLE_LLM_MODELS:-["llama3.2"]}
+      MIXLE_DEFAULT_MODEL: ${MIXLE_DEFAULT_MODEL:-echo}
+    volumes:
+      - mixle_data:/data
+    depends_on:
+      ollama:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/health').status==200 else 1)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+  ollama:
+    image: ollama/ollama:latest
+    restart: unless-stopped
+    ports:
+      - "${OLLAMA_PORT:-11434}:11434"
+    volumes:
+      - ollama_models:/root/.ollama
+    healthcheck:
+      # Ollama ships without curl; the bundled `ollama` CLI talks to the local daemon.
+      test: ["CMD", "ollama", "list"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+
+  # OPTIONAL: cloud-mode Postgres. Started only with `--profile cloud`.
+  postgres:
+    image: postgres:16-alpine
+    profiles: ["cloud"]
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-mixle}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-mixle}
+      POSTGRES_DB: ${POSTGRES_DB:-mixle}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-mixle}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+volumes:
+  mixle_data:
+  ollama_models:
+  postgres_data:

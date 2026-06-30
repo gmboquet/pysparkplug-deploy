@@ -1,0 +1,13 @@
+# Persistent storage for the gateway's mixle_data: SQLite DB + the model registry + blobs.
+# ReadWriteOnce is fine for a single gateway replica. For multi-replica local-mode you need
+# RWX (e.g. NFS/EFS) or, better, cloud mode (Postgres + S3) so replicas are stateless.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: mixle-data
+  labels: { app: mixle-gateway }
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: 5Gi

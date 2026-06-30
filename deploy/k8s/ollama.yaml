@@ -1,0 +1,63 @@
+# Default LLM backend: Ollama, OpenAI-compatible at :11434/v1. The gateway points at the
+# `mixle-ollama` Service (see ConfigMap MIXLE_LLM_BASE_URL). Pull a model after rollout:
+#   kubectl exec deploy/mixle-ollama -- ollama pull llama3.2
+# For GPU nodes add a `nvidia.com/gpu` resource request and the appropriate nodeSelector/runtime.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mixle-ollama
+  labels: { app: mixle-ollama }
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: mixle-ollama }
+  strategy:
+    type: Recreate
+  template:
+    metadata:
+      labels: { app: mixle-ollama }
+    spec:
+      containers:
+        - name: ollama
+          image: ollama/ollama:latest
+          ports:
+            - { name: http, containerPort: 11434 }
+          readinessProbe:
+            exec: { command: ["ollama", "list"] }
+            initialDelaySeconds: 10
+            periodSeconds: 15
+          livenessProbe:
+            exec: { command: ["ollama", "list"] }
+            initialDelaySeconds: 30
+            periodSeconds: 30
+          resources:
+            requests: { cpu: "500m", memory: 2Gi }
+            limits: { cpu: "4", memory: 8Gi }
+          volumeMounts:
+            - { name: models, mountPath: /root/.ollama }
+      volumes:
+        - name: models
+          persistentVolumeClaim:
+            claimName: mixle-ollama-models
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: mixle-ollama-models
+  labels: { app: mixle-ollama }
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: 20Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mixle-ollama
+  labels: { app: mixle-ollama }
+spec:
+  selector: { app: mixle-ollama }
+  ports:
+    - { name: http, port: 11434, targetPort: http }
+  type: ClusterIP

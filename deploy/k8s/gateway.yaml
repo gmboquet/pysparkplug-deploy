@@ -1,0 +1,63 @@
+# The platform gateway (mixle-serve): OpenAI-compatible API + platform API on :8000.
+# Replaces the OLD k8s/ intent (which served the single mixle-model scoring server).
+#
+# replicas=1 because local mode keeps state (SQLite + registry) on the RWO PVC. For horizontal
+# scale switch to cloud mode (Postgres + S3) — then this becomes stateless and you can raise
+# replicas / add an HPA, dropping the PVC mount.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mixle-gateway
+  labels: { app: mixle-gateway }
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: mixle-gateway }
+  strategy:
+    type: Recreate            # RWO volume can't be attached to two pods during a rolling update
+  template:
+    metadata:
+      labels: { app: mixle-gateway }
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        fsGroup: 10001
+      containers:
+        - name: gateway
+          image: <your-registry>/mixle-mlops:latest
+          imagePullPolicy: IfNotPresent
+          command: ["mixle-serve"]
+          ports:
+            - { name: http, containerPort: 8000 }
+          envFrom:
+            - configMapRef: { name: mixle-gateway-config }
+            - secretRef: { name: mixle-gateway-secret }
+          readinessProbe:
+            httpGet: { path: /health, port: http }
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: { path: /health, port: http }
+            initialDelaySeconds: 20
+            periodSeconds: 20
+          resources:
+            requests: { cpu: "250m", memory: 512Mi }
+            limits: { cpu: "2", memory: 2Gi }
+          volumeMounts:
+            - { name: data, mountPath: /data }
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: mixle-data
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mixle-gateway
+  labels: { app: mixle-gateway }
+spec:
+  selector: { app: mixle-gateway }
+  ports:
+    - { name: http, port: 80, targetPort: http }
+  type: ClusterIP            # front with an Ingress, or switch to LoadBalancer for direct exposure
