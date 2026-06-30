@@ -4,7 +4,9 @@ __pycache__/
 build/
 dist/
 .venv/
+# ignore ML model-artifact dirs, but NOT the mixle_mlops/models source package
 models/
+!mixle_mlops/models/
 .ruff_cache/
 .pytest_cache/
 .DS_Store
