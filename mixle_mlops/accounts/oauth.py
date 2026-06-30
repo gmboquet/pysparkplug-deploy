@@ -99,9 +99,16 @@ def enabled_providers(settings: Settings | None = None) -> list[str]:
 # --- stateless signed state (binds nonce + redirect_uri across the redirect round-trip) ---
 
 
-def make_state(nonce: str, redirect_uri: str, settings: Settings | None = None) -> str:
+def make_state(
+    nonce: str, redirect_uri: str, redirect_to: str | None = None, settings: Settings | None = None
+) -> str:
     s = settings or get_settings()
-    payload = {"nonce": nonce, "redirect_uri": redirect_uri, "exp": int(time.time()) + s.oauth_state_ttl}
+    payload = {
+        "nonce": nonce,
+        "redirect_uri": redirect_uri,
+        "redirect_to": redirect_to,
+        "exp": int(time.time()) + s.oauth_state_ttl,
+    }
     body = _b64u(json.dumps(payload, separators=(",", ":")).encode())
     sig = _b64u(hmac.new(s.secret_key.encode(), body.encode(), hashlib.sha256).digest())
     return f"{body}.{sig}"
@@ -122,9 +129,14 @@ def read_state(state: str, settings: Settings | None = None) -> dict:
     return payload
 
 
-def authorization_url(provider: OAuthProvider, redirect_uri: str, settings: Settings | None = None) -> dict:
+def authorization_url(
+    provider: OAuthProvider,
+    redirect_uri: str,
+    redirect_to: str | None = None,
+    settings: Settings | None = None,
+) -> dict:
     nonce = _b64u(hashlib.sha256(f"{time.time()}".encode()).digest())[:24]
-    state = make_state(nonce, redirect_uri, settings)
+    state = make_state(nonce, redirect_uri, redirect_to, settings)
     params = {
         "client_id": provider.client_id,
         "redirect_uri": redirect_uri,

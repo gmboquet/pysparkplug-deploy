@@ -131,3 +131,38 @@ def test_google_oidc_signin(tmp_path, monkeypatch):
 
 def test_oauth_unknown_provider(client):
     assert client.get("/auth/oauth/google/url").status_code == 404   # not enabled by default
+
+
+def test_device_page_renders(client):
+    r = client.get("/auth/device", params={"user_code": "ABCD-EFGH"})
+    assert r.status_code == 200
+    assert "Authorize mixle-agent" in r.text
+    assert "text/html" in r.headers["content-type"]
+
+
+def test_oauth_browser_redirect_flow(tmp_path, monkeypatch):
+    client_id = "gid.apps.googleusercontent.com"
+    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    priv_pem = key.private_bytes(
+        serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8, serialization.NoEncryption()
+    ).decode()
+    pub_pem = key.public_key().public_bytes(
+        serialization.Encoding.PEM, serialization.PublicFormat.SubjectPublicKeyInfo
+    ).decode()
+    with _make_client(tmp_path, monkeypatch, MIXLE_GOOGLE_CLIENT_ID=client_id) as c:
+        started = c.get("/auth/oauth/google/url", params={"redirect_to": "http://localhost:8000/auth/device?user_code=ABCD-EFGH"}).json()
+        id_token = jwt.encode(
+            {"iss": "https://accounts.google.com", "aud": client_id, "sub": "u1",
+             "email": "bob@gmail.com", "nonce": started["nonce"], "exp": 9999999999},
+            priv_pem, algorithm="RS256",
+        )
+        monkeypatch.setattr(oauth, "exchange_code", lambda p, code, ru: {"id_token": id_token})
+        monkeypatch.setattr(oauth, "_signing_key", lambda p, t: pub_pem)
+        res = c.get("/auth/oauth/google/callback",
+                    params={"code": "x", "state": started["state"]}, follow_redirects=False)
+        assert res.status_code == 303
+        loc = res.headers["location"]
+        assert loc.startswith("http://localhost:8000/auth/device?user_code=ABCD-EFGH#")
+        assert "token=" in loc and "email=" in loc
+    get_settings.cache_clear()
+    db._engine = None
