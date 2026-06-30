@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import json
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from fastapi.responses import StreamingResponse
 
 from ...accounts.models import User
@@ -29,10 +29,10 @@ def _principal(user: User | None, request: Request) -> str:
     return request.client.host if request.client else "anon"
 
 
-def _persist(user: User | None, req: ChatRequest, name: str, assistant_text: str) -> None:
-    """Record the turn into the user's conversation history (memory + export). Best-effort."""
+def _persist(user: User | None, req: ChatRequest, name: str, assistant_text: str) -> str | None:
+    """Record the turn into the user's conversation history; return the conversation id (for threading). Best-effort."""
     if user is None:
-        return
+        return None
     try:
         from sqlmodel import Session
 
@@ -41,13 +41,15 @@ def _persist(user: User | None, req: ChatRequest, name: str, assistant_text: str
 
         user_text = req.messages[-1].text() if req.messages else ""
         with Session(get_engine()) as session:
-            persist_turn(session, user.id, req.extra.get("conversation_id"), user_text, assistant_text, model=name)
+            conv = persist_turn(session, user.id, req.extra.get("conversation_id"), user_text, assistant_text, model=name)
+            return conv.id
     except Exception:
-        pass
+        return None
 
 
 @router.post("/chat/completions")
-async def chat_completions(req: ChatRequest, request: Request, user: User | None = Depends(current_user)):
+async def chat_completions(req: ChatRequest, request: Request, response: Response,
+                           user: User | None = Depends(current_user)):
     settings = get_settings()
     registry = request.app.state.registry
     name = req.model or settings.default_model
@@ -100,13 +102,17 @@ async def chat_completions(req: ChatRequest, request: Request, user: User | None
                 chunk = ChatCompletionChunk(model=name, choices=[ChatChunkChoice(
                     index=0, delta=ChoiceDelta(role="assistant", content=text), finish_reason="stop")])
                 yield f"data: {chunk.model_dump_json()}\n\n"
-                _persist(user, req, name, text)
+                cid = _persist(user, req, name, text)
+                if cid:
+                    yield f"data: {json.dumps({'conversation_id': cid})}\n\n"
                 yield "data: [DONE]\n\n"
 
             return StreamingResponse(agent_stream(), media_type="text/event-stream",
                                      headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
         completion = await run_agent_loop(adapter, req, tool_reg, max_iters=max_iters)
-        _persist(user, req, name, completion.choices[0].message.text() if completion.choices else "")
+        cid = _persist(user, req, name, completion.choices[0].message.text() if completion.choices else "")
+        if cid:
+            response.headers["X-Conversation-Id"] = cid
         return completion
 
     # 5. response cache (opt-in via MIXLE_ENABLE_RESPONSE_CACHE), exact-match, non-streaming, non-tool only
@@ -133,7 +139,9 @@ async def chat_completions(req: ChatRequest, request: Request, user: User | None
                     yield f"data: {chunk.model_dump_json()}\n\n"
             except Exception as exc:
                 yield f"data: {json.dumps({'error': {'message': str(exc)}})}\n\n"
-            _persist(user, req, name, "".join(buf))
+            cid = _persist(user, req, name, "".join(buf))
+            if cid:
+                yield f"data: {json.dumps({'conversation_id': cid})}\n\n"
             yield "data: [DONE]\n\n"
 
         return StreamingResponse(event_stream(), media_type="text/event-stream",
@@ -145,5 +153,7 @@ async def chat_completions(req: ChatRequest, request: Request, user: User | None
             rc.set(req, completion.model_dump())
         except Exception:
             pass
-    _persist(user, req, name, completion.choices[0].message.text() if completion.choices else "")
+    cid = _persist(user, req, name, completion.choices[0].message.text() if completion.choices else "")
+    if cid:
+        response.headers["X-Conversation-Id"] = cid
     return completion

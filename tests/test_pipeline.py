@@ -43,14 +43,16 @@ def test_chat_persists_conversation(tmp_path, monkeypatch):
     """A default authenticated chat records the turn; it shows up in the user's conversation history."""
     with _client(tmp_path, monkeypatch) as c:
         headers = _signup(c, "persist@t.com")
-        assert _chat(c, headers, "remember me").status_code == 200
+        r = _chat(c, headers, "remember me")
+        assert r.status_code == 200
+        conv_id = r.headers.get("X-Conversation-Id")          # the route surfaces the id for threading
+        assert conv_id
         convs = c.get("/v1/conversations", headers=headers).json()["data"]
-        assert len(convs) == 1
-        conv_id = convs[0]["id"]
+        assert len(convs) == 1 and convs[0]["id"] == conv_id
         msgs = c.get(f"/v1/conversations/{conv_id}", headers=headers).json()["messages"]
         roles = [m["role"] for m in msgs]
         assert "user" in roles and "assistant" in roles
-        # threading a second turn into the same conversation appends, not creates
+        # threading a second turn via the returned id appends, not creates
         assert _chat(c, headers, "again", extra={"conversation_id": conv_id}).status_code == 200
         assert len(c.get("/v1/conversations", headers=headers).json()["data"]) == 1
 
