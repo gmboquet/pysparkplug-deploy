@@ -1,17 +1,17 @@
-"""FastAPI serving layer for a pysparkplug model -- a thin HTTP wrapper over ``pysp.inference.production.Service``.
+"""FastAPI serving layer for a mixle model -- a thin HTTP wrapper over ``mixle.inference.production.Service``.
 
-It loads the model an alias points at in a :class:`~pysp.inference.production.Registry` (a shared volume / object
+It loads the model an alias points at in a :class:`~mixle.inference.production.Registry` (a shared volume / object
 store) and exposes it over HTTP: scoring, health (for Kubernetes probes), provenance, and drift checks.
 
 It is *stateless*: every replica loads the same model from the shared registry, so scaling is horizontal
 and a model swap is ``registry.promote(name, version)`` followed by a rolling restart (or ``POST /reload``).
 
 Configuration is by environment variable:
-  PYSP_REGISTRY_ROOT   registry directory (default ``/models``)
-  PYSP_MODEL_NAME      model name in the registry (default ``model``)
-  PYSP_MODEL_ALIAS     alias to serve (default ``production``)
-  PYSP_REFERENCE_PATH  optional JSON array of reference records -> enables ``/drift``
-  PYSP_ACTIVITY_LOG    optional path for the JSONL activity log (e.g. ``/dev/stdout`` for k8s logs)
+  MIXLE_REGISTRY_ROOT   registry directory (default ``/models``)
+  MIXLE_MODEL_NAME      model name in the registry (default ``model``)
+  MIXLE_MODEL_ALIAS     alias to serve (default ``production``)
+  MIXLE_REFERENCE_PATH  optional JSON array of reference records -> enables ``/drift``
+  MIXLE_ACTIVITY_LOG    optional path for the JSONL activity log (e.g. ``/dev/stdout`` for k8s logs)
 
 Run: ``uvicorn app:app --host 0.0.0.0 --port 8000``.
 """
@@ -27,13 +27,13 @@ from typing import Any
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 
-from pysp.inference.production import Registry, Service
+from mixle.inference.production import Registry, Service
 
-REGISTRY_ROOT = os.environ.get("PYSP_REGISTRY_ROOT", "/models")
-MODEL_NAME = os.environ.get("PYSP_MODEL_NAME", "model")
-MODEL_ALIAS = os.environ.get("PYSP_MODEL_ALIAS", "production")
-REFERENCE_PATH = os.environ.get("PYSP_REFERENCE_PATH")
-ACTIVITY_LOG = os.environ.get("PYSP_ACTIVITY_LOG")
+REGISTRY_ROOT = os.environ.get("MIXLE_REGISTRY_ROOT", "/models")
+MODEL_NAME = os.environ.get("MIXLE_MODEL_NAME", "model")
+MODEL_ALIAS = os.environ.get("MIXLE_MODEL_ALIAS", "production")
+REFERENCE_PATH = os.environ.get("MIXLE_REFERENCE_PATH")
+ACTIVITY_LOG = os.environ.get("MIXLE_ACTIVITY_LOG")
 
 _state: dict[str, Any] = {"service": None}
 
@@ -72,7 +72,7 @@ async def _lifespan(_app: FastAPI):
     yield
 
 
-app = FastAPI(title="pysparkplug model server", version="1", lifespan=_lifespan)
+app = FastAPI(title="mixle model server", version="1", lifespan=_lifespan)
 
 
 class ScoreRequest(BaseModel):
@@ -114,7 +114,7 @@ def score(req: ScoreRequest) -> dict:
 
 @app.post("/drift")
 def drift(req: ScoreRequest) -> dict:
-    """Drift of the posted batch vs the configured reference sample (needs PYSP_REFERENCE_PATH)."""
+    """Drift of the posted batch vs the configured reference sample (needs MIXLE_REFERENCE_PATH)."""
     svc = _service()
     try:
         report = svc.check_drift(_records(req.records))
@@ -131,14 +131,14 @@ def reload() -> dict:
 
 
 def main() -> None:
-    """Console entry point (``pysp-serve``): run the app with uvicorn.
+    """Console entry point (``mixle-serve``): run the app with uvicorn.
 
     Host/port/workers come from ``HOST``/``PORT``/``WEB_CONCURRENCY`` env vars.
     """
     import uvicorn
 
     uvicorn.run(
-        "pysparkplug_deploy.app:app",
+        "mixle_mlops.app:app",
         host=os.environ.get("HOST", "0.0.0.0"),
         port=int(os.environ.get("PORT", "8000")),
         workers=int(os.environ.get("WEB_CONCURRENCY", "1")),

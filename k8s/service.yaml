@@ -3,9 +3,9 @@
 apiVersion: v1
 kind: Service
 metadata:
-  name: pysp-model
+  name: mixle-model
 spec:
-  selector: { app: pysp-model }
+  selector: { app: mixle-model }
   ports:
     - name: http
       port: 80

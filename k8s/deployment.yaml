@@ -1,30 +1,30 @@
 # Stateless scoring replicas. Each loads the production model from the shared registry at startup;
 # /health backs the k8s probes. Scale with `replicas` (or an HPA on CPU). A model swap is:
-#   registry.promote(...)  ->  kubectl rollout restart deployment/pysp-model   (or POST /reload per pod)
+#   registry.promote(...)  ->  kubectl rollout restart deployment/mixle-model   (or POST /reload per pod)
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: pysp-model
-  labels: { app: pysp-model }
+  name: mixle-model
+  labels: { app: mixle-model }
 spec:
   replicas: 3
   selector:
-    matchLabels: { app: pysp-model }
+    matchLabels: { app: mixle-model }
   template:
     metadata:
-      labels: { app: pysp-model }
+      labels: { app: mixle-model }
     spec:
       containers:
         - name: server
-          image: <your-registry>/pysparkplug-deploy:latest
+          image: <your-registry>/mixle-mlops:latest
           ports:
             - containerPort: 8000
           env:
-            - { name: PYSP_REGISTRY_ROOT, value: /models }
-            - { name: PYSP_MODEL_NAME, value: model }
-            - { name: PYSP_MODEL_ALIAS, value: production }
-            - { name: PYSP_REFERENCE_PATH, value: /models/model/reference.json }
-            - { name: PYSP_ACTIVITY_LOG, value: /dev/stdout }
+            - { name: MIXLE_REGISTRY_ROOT, value: /models }
+            - { name: MIXLE_MODEL_NAME, value: model }
+            - { name: MIXLE_MODEL_ALIAS, value: production }
+            - { name: MIXLE_REFERENCE_PATH, value: /models/model/reference.json }
+            - { name: MIXLE_ACTIVITY_LOG, value: /dev/stdout }
           readinessProbe:
             httpGet: { path: /health, port: 8000 }
             initialDelaySeconds: 5
@@ -41,4 +41,4 @@ spec:
       volumes:
         - name: registry
           persistentVolumeClaim:
-            claimName: pysp-registry
+            claimName: mixle-registry

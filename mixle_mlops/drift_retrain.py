@@ -3,7 +3,7 @@
 Loads the current production model + its drift reference, evaluates drift on a recent production batch, and
 if drift is detected retrains a fresh model (with new provenance), registers it, and promotes it to
 ``production``. The serving Deployment then picks the new model up on its next ``POST /reload`` or a rolling
-restart (``kubectl rollout restart deployment/pysp-model``).
+restart (``kubectl rollout restart deployment/mixle-model``).
 
 ``_recent_batch()`` is a stub: wire it to your real production-data store (warehouse, log sink, the
 serving activity log, ...). The estimator here is a Gaussian to match seed_registry.py -- swap in yours.
@@ -16,16 +16,16 @@ import os
 
 import numpy as np
 
-from pysp.inference.production import Registry, detect_drift, fit_with_provenance
-from pysp.stats import GaussianDistribution
+from mixle.inference.production import Registry, detect_drift, fit_with_provenance
+from mixle.stats import GaussianDistribution
 
-ROOT = os.environ.get("PYSP_REGISTRY_ROOT", "./models")
-NAME = os.environ.get("PYSP_MODEL_NAME", "model")
+ROOT = os.environ.get("MIXLE_REGISTRY_ROOT", "./models")
+NAME = os.environ.get("MIXLE_MODEL_NAME", "model")
 
 
 def _recent_batch() -> list:
     """STUB: return the recent production records to test for drift. Replace with a real data pull."""
-    path = os.environ.get("PYSP_RECENT_BATCH_PATH")
+    path = os.environ.get("MIXLE_RECENT_BATCH_PATH")
     if path and os.path.exists(path):
         with open(path) as fh:
             return json.load(fh)

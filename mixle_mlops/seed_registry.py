@@ -1,10 +1,10 @@
 """Seed the model registry so the server has something to serve (run once, or as an init Job).
 
 Trains a model with full provenance, registers it, promotes it to the ``production`` alias, and saves the
-training sample as the drift reference. Point ``PYSP_REGISTRY_ROOT`` at the same volume the server reads.
+training sample as the drift reference. Point ``MIXLE_REGISTRY_ROOT`` at the same volume the server reads.
 
 This is an EXAMPLE using a Gaussian over synthetic data; swap in your real model/estimator and your real
-training data (e.g. loaded via ``pysp.data.open_source('csv'|'parquet'|'sql', ...)``).
+training data (e.g. loaded via ``mixle.data.open_source('csv'|'parquet'|'sql', ...)``).
 """
 
 from __future__ import annotations
@@ -14,11 +14,11 @@ import os
 
 import numpy as np
 
-from pysp.inference.production import Registry, fit_with_provenance
-from pysp.stats import GaussianDistribution
+from mixle.inference.production import Registry, fit_with_provenance
+from mixle.stats import GaussianDistribution
 
-ROOT = os.environ.get("PYSP_REGISTRY_ROOT", "./models")
-NAME = os.environ.get("PYSP_MODEL_NAME", "model")
+ROOT = os.environ.get("MIXLE_REGISTRY_ROOT", "./models")
+NAME = os.environ.get("MIXLE_MODEL_NAME", "model")
 
 
 def main() -> None:

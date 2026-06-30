@@ -1,28 +1,28 @@
-# pysparkplug model server image (standalone pysparkplug-deploy package).
+# mixle model server image (standalone mixle-mlops package).
 #
-#   docker build -t <registry>/pysparkplug-deploy:latest .
+#   docker build -t <registry>/mixle-mlops:latest .
 #
-# Installs pysp-learn (the core model library) + this serving package. The image bundles no model --
-# the model is loaded at runtime from the registry volume (seed it with `pysp-seed`).
+# Installs mixle (the core model library) + this serving package. The image bundles no model --
+# the model is loaded at runtime from the registry volume (seed it with `mixle-seed`).
 
 FROM python:3.12-slim
 
 WORKDIR /app
 
 COPY pyproject.toml README.md ./
-COPY pysparkplug_deploy ./pysparkplug_deploy
+COPY mixle_mlops ./mixle_mlops
 
-# pysp-learn is not on PyPI yet; install it from git, then this package (which pulls fastapi/uvicorn).
-# Once pysp-learn is published, drop the explicit git line -- the dependency resolves from PyPI.
-RUN pip install --no-cache-dir "pysp-learn @ git+https://github.com/gmboquet/pysparkplug.git" \
+# mixle is not on PyPI yet; install it from git, then this package (which pulls fastapi/uvicorn).
+# Once mixle is published, drop the explicit git line -- the dependency resolves from PyPI.
+RUN pip install --no-cache-dir "mixle @ git+https://github.com/gmboquet/mixle.git" \
     && pip install --no-cache-dir .
 
-ENV PYSP_REGISTRY_ROOT=/models \
-    PYSP_MODEL_NAME=model \
-    PYSP_MODEL_ALIAS=production \
-    PYSP_ACTIVITY_LOG=/dev/stdout
+ENV MIXLE_REGISTRY_ROOT=/models \
+    MIXLE_MODEL_NAME=model \
+    MIXLE_MODEL_ALIAS=production \
+    MIXLE_ACTIVITY_LOG=/dev/stdout
 
 EXPOSE 8000
 
-# Console script from pyproject [project.scripts]; runs uvicorn on pysparkplug_deploy.app:app.
-CMD ["pysp-serve"]
+# Console script from pyproject [project.scripts]; runs uvicorn on mixle_mlops.app:app.
+CMD ["mixle-serve"]
