@@ -10,8 +10,9 @@ import json
 import os
 import shlex
 import subprocess
+import sys
 import time
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from pathlib import Path
 from typing import Callable
 
@@ -36,6 +37,44 @@ def plan(job: TrainingJob, *, s3_dest: str | None = None) -> dict:
         "training_command": jobspec.training_command(job),
         "onstart": jobspec.build_onstart(job, s3_dest) if job.mode == "onstart" else None,
     }
+
+
+def run_local(
+    job: TrainingJob,
+    *,
+    on_log: Log = print,
+    registry_root: str | None = None,
+    artifact_dir: str = "./trained",
+    python: str | None = None,
+) -> dict:
+    """Run the exact same job on THIS machine (no vast, no spend) — to validate before renting a GPU."""
+    job.validate()
+    python = python or sys.executable
+    base = Path(artifact_dir) / job.name
+    base.mkdir(parents=True, exist_ok=True)
+    if job.backend == "llm":
+        (base / "llm_lora_train.py").write_text(jobspec.LLM_LORA_SCRIPT)
+        cwd = base
+    else:
+        cwd = Path(job.workdir or ".").resolve()
+    # resolve a local dataset path so it's found from the run dir
+    ds = job.dataset
+    if ds and Path(ds).exists():
+        ds = str(Path(ds).resolve())
+    parts = shlex.split(jobspec.training_command(replace(job, dataset=ds)))
+    parts[0] = python
+    on_log(f"running locally in {cwd}:\n  {' '.join(parts)}")
+    proc = subprocess.Popen(parts, cwd=str(cwd), stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
+    assert proc.stdout is not None
+    for line in proc.stdout:
+        on_log(line.rstrip())
+    if proc.wait() != 0:
+        raise RuntimeError("local training failed")
+    artifact = str((cwd / job.output).resolve())
+    result: dict = {"local": True, "artifact": artifact}
+    if job.register and registry_root:
+        result["registered"] = _register(job, artifact, registry_root, None, on_log)
+    return result
 
 
 def launch(
@@ -173,7 +212,7 @@ def _register(job: TrainingJob, local: str, registry_root: str, offer, on_log: L
         "backend": job.backend,
         "base_model": job.base_model,
         "artifact": local,
-        "offer": {"id": offer.id, "gpu": offer.gpu_name, "price": offer.price},
+        "offer": ({"id": offer.id, "gpu": offer.gpu_name, "price": offer.price} if offer else "local"),
         "created_at": time.time(),
     }
     (root / "metadata.json").write_text(json.dumps(meta, indent=2))

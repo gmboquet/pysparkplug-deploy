@@ -50,6 +50,7 @@ def main(argv: list[str] | None = None) -> None:
     tr.add_argument("--image", default=None, help="docker image override")
     tr.add_argument("--no-register", dest="register", action="store_false")
     tr.add_argument("--no-dry-run", dest="dry_run", action="store_false", help="actually rent a GPU and train")
+    tr.add_argument("--local", action="store_true", help="run on THIS machine (no vast.ai) — validate before renting")
     tr.add_argument("--s3-dest", dest="s3_dest", default=None, help="object-store URL for onstart artifacts")
 
     args = parser.parse_args(argv)
@@ -80,7 +81,7 @@ def main(argv: list[str] | None = None) -> None:
         print(f"wrote {path}")
         print(next_steps(args.provider))
     elif args.cmd == "train":
-        from .compute import TrainingJob, launch
+        from .compute import TrainingJob, launch, run_local
         from .config import get_settings
 
         s = get_settings()
@@ -102,15 +103,19 @@ def main(argv: list[str] | None = None) -> None:
             image=args.image,
             register=args.register,
         )
-        result = launch(
-            job,
-            api_key=s.vast_api_key,
-            dry_run=args.dry_run,
-            registry_root=str(s.registry_root),
-            s3_dest=args.s3_dest,
-        )
-        if not args.dry_run:
+        if args.local:
+            result = run_local(job, registry_root=str(s.registry_root))
             print(json.dumps(result, indent=2, default=str))
+        else:
+            result = launch(
+                job,
+                api_key=s.vast_api_key,
+                dry_run=args.dry_run,
+                registry_root=str(s.registry_root),
+                s3_dest=args.s3_dest,
+            )
+            if not args.dry_run:
+                print(json.dumps(result, indent=2, default=str))
 
 
 if __name__ == "__main__":

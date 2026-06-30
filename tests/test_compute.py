@@ -37,7 +37,7 @@ def test_training_command_mixle_and_llm():
 def test_pip_packages():
     assert "mixle" in pip_packages(TrainingJob(name="m", backend="mixle", script="t.py", workdir="."))
     llm = pip_packages(TrainingJob(name="l", backend="llm", base_model="x"))
-    assert any("peft" in p for p in llm) and any("trl" in p for p in llm)
+    assert any("peft" in p for p in llm) and any("transformers" in p for p in llm)
 
 
 def test_onstart_script():
