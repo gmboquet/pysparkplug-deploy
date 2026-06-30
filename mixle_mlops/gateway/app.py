@@ -20,6 +20,7 @@ from .routes import (
     cloud,
     conversations,
     datasets,
+    evolve,
     feedback,
     files,
     images,
@@ -88,6 +89,7 @@ def create_app() -> FastAPI:
     app.include_router(images.router, prefix="/v1", tags=["images"])      # /v1/images/generations
     app.include_router(datasets.router, prefix="/v1", tags=["datasets"])  # /v1/datasets/generate
     app.include_router(cloud.router, prefix="/v1", tags=["cloud"])        # /v1/cloud/objectstore
+    app.include_router(evolve.router, prefix="/v1", tags=["evolve"])      # /v1/evolve/* (self-evolution)
     return app
 
 

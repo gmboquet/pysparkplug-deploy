@@ -7,6 +7,7 @@ from . import (
     cloud,
     conversations,
     datasets,
+    evolve,
     feedback,
     files,
     images,
@@ -18,5 +19,5 @@ from . import (
 
 __all__ = [
     "chat", "models", "accounts", "mixle", "feedback", "files", "mcp",
-    "rag", "cache", "conversations", "images", "datasets", "cloud",
+    "rag", "cache", "conversations", "images", "datasets", "cloud", "evolve",
 ]
