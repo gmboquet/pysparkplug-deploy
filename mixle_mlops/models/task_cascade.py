@@ -38,6 +38,7 @@ class TaskCascadeAdapter(ModelAdapter):
         self._calibrated = hasattr(model, "decide") and hasattr(model, "task")
         self._task = model.task if self._calibrated else model
         self._labels = list(getattr(self._task.adapter, "labels", []))
+        self._has_proba = hasattr(self._task.adapter, "proba_batch")  # classifiers yes, extractors no
 
     @property
     def name(self) -> str:
@@ -49,31 +50,40 @@ class TaskCascadeAdapter(ModelAdapter):
     def capabilities(self) -> set[str]:
         # predict carries the honest escalate signal when calibrated; the mixle /decide route is a separate
         # Bayes-action-under-loss surface for numeric outcomes, which a classifier task does not implement.
-        return {"chat", "predict", "score"}
+        caps = {"chat", "predict"}
+        if self._has_proba:  # only a classifier has class probabilities to score
+            caps.add("score")
+        return caps
 
     # --- distribution/decision surface (records are raw task inputs: strings or field dicts/tuples) ---
     async def predict(self, records: list[Any], **opts: Any) -> Any:
-        """Local labels for each record. When calibrated, each carries the honest answer-or-``escalate`` decision.
+        """Run the local model on each record: a class label, or an extracted ``{field: value}`` for an extractor.
 
-        A confident, in-distribution input returns its label and ``escalate=False``; an ambiguous (non-singleton
-        conformal set) or out-of-distribution input returns ``label=None`` and ``escalate=True`` -- the signal
-        the gateway routes to a frontier model. ``escalation_rate`` is the realized fraction for this batch.
+        When calibrated, each result also carries the honest answer-or-``escalate`` decision: a confident,
+        in-distribution input returns its label with ``escalate=False``; an ambiguous (non-singleton conformal
+        set) or out-of-distribution input returns ``escalate=True`` -- the signal the gateway routes to a frontier.
         """
         records = list(records)
-        labels = self._task.batch(records)
-        out: dict[str, Any] = {"model": self._name, "labels": labels}
+        results = self._task.batch(records)
+        out: dict[str, Any] = {"model": self._name, "results": results}
+        if results and all(isinstance(r, str) for r in results):
+            out["labels"] = results  # classifier convenience alias
         if self._calibrated:
             sets = self._model.predict_sets(records)
             flags = self._model._escalate_flags(records, sets)
             out["decisions"] = [
                 {"label": (None if esc else label), "escalate": bool(esc), "set": list(s)}
-                for label, s, esc in zip(labels, sets, flags)
+                for label, s, esc in zip(results, sets, flags)
             ]
             out["escalation_rate"] = float(sum(flags) / len(flags)) if len(flags) else 0.0
         return out
 
     async def score(self, records: list[Any], **opts: Any) -> Any:
-        """Per-record class probabilities (softmax of the student's logits) over the label set."""
+        """Per-record class probabilities (softmax of the student's logits) over the label set (classifiers only)."""
+        if not self._has_proba:
+            from ..core.adapters import CapabilityError
+
+            raise CapabilityError(self._name, "score")
         proba = self._task.adapter.proba_batch(self._task.model, list(records))
         return {"model": self._name, "labels": self._labels, "proba": [[float(p) for p in row] for row in proba]}
 
@@ -100,14 +110,14 @@ class TaskCascadeAdapter(ModelAdapter):
             if len(s) == 1:
                 return f"[{self._name}] {s[0]}"
             return f"[{self._name}] escalate (uncertain; conformal set = {s or 'empty'})"
-        return f"[{self._name}] {self._task(record)}"
+        return f"[{self._name}] {_as_text(self._task(record))}"
 
     async def escalation_decision(self, req: ChatRequest) -> dict[str, Any] | None:
         """Drive the cascade with the calibrated gate: answer locally when confident, else signal escalate."""
         last = next((m for m in reversed(req.messages) if m.role == "user"), None)
         record = self._parse_record(last.text().strip() if last else "")
         if not self._calibrated:
-            return {"escalate": False, "answer": str(self._task(record)), "confidence": 1.0}
+            return {"escalate": False, "answer": _as_text(self._task(record)), "confidence": 1.0}
         s = self._model.predict_set(record)
         escalate = bool(self._model._escalate_flags([record], [s])[0])
         return {"escalate": escalate, "answer": (None if escalate else s[0]), "confidence": (0.0 if escalate else 1.0)}
@@ -122,6 +132,11 @@ class TaskCascadeAdapter(ModelAdapter):
         except (ValueError, TypeError):
             pass
         return raw
+
+
+def _as_text(result: Any) -> str:
+    """Render a task result for chat: a label as-is, an extracted ``{field: value}`` as compact JSON."""
+    return json.dumps(result) if isinstance(result, dict) else str(result)
 
 
 def register_demo_task_model(registry: Any, *, name: str = "demo-task") -> TaskCascadeAdapter:

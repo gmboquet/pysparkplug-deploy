@@ -133,6 +133,38 @@ def test_cascade_routes_on_calibrated_signal():
     assert comp2.choices[0].message.content == "FRONTIER"
 
 
+def test_serve_extraction_model():
+    """An extraction task model (text -> {field: value}) is servable: predict returns dicts, no score capability."""
+    import asyncio
+
+    from mixle.task.extract import distill_extractor
+    from mixle.task.model import TaskModel  # noqa: F811
+
+    fields = ["id", "amount"]
+
+    def teacher(texts):
+        out = []
+        for t in texts:
+            d = {}
+            for tok in t.split():
+                if tok.startswith("INV-"):
+                    d["id"] = tok[4:]
+                if tok.startswith("$"):
+                    d["amount"] = tok[1:]
+            out.append(d)
+        return out
+
+    lines = [f"INV-{1000 + i} paid ${i}.50 today" for i in range(120)]
+    extractor: TaskModel = distill_extractor(teacher, lines, fields, epochs=120, seed=0)
+    adapter = TaskCascadeAdapter("extract", extractor)
+
+    caps = adapter.capabilities()
+    assert "predict" in caps and "score" not in caps  # extractors have no class probabilities
+    out = asyncio.run(adapter.predict(["INV-1055 paid $7.50 today"]))
+    assert out["results"][0].get("id") == "1055"
+    assert "labels" not in out  # results are dicts, not labels
+
+
 # --- unit level: the adapter directly, no gateway ---
 def test_adapter_plain_taskmodel_capabilities():
     import numpy as np
