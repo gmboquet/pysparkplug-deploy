@@ -283,8 +283,10 @@ def _escape(s: str) -> str:
     return "".join("\\" + c if c in _META else c for c in s)
 
 
-def _value_regex(prop: dict) -> str:
-    """A regex matching a JSON value of the given schema property (canonical formatting)."""
+def _value_regex(prop: dict, depth: int = 3) -> str:
+    """A regex matching a JSON value of the given schema property (canonical formatting). Nested objects/arrays
+    recurse up to ``depth``; below that they degrade to a string (an FSA is finite-state, so unbounded nesting
+    genuinely cannot be expressed — the honest bound)."""
     if "enum" in prop:
         opts = []
         for v in prop["enum"]:
@@ -299,23 +301,35 @@ def _value_regex(prop: dict) -> str:
         return r"-?\d+(\.\d+)?"
     if t == "boolean":
         return r"(true|false)"
-    return r'"[^"]*"'                                          # default: a string
+    if t == "object" and depth > 0:
+        return _object_regex(prop, depth - 1)
+    if t == "array" and depth > 0:
+        item = _value_regex(prop.get("items", {}), depth - 1)
+        return r"\[(" + item + r"(, " + item + r")*)?\]"      # 0-or-more items, canonical ", " separator
+    return r'"[^"]*"'                                          # default / too-deep: a string
 
 
-def json_schema_to_regex(schema: dict) -> str:
-    """Compile a flat-object JSON schema into a regex matching a canonical instance: ``{"k": v, ...}`` over the
-    required (or all) properties, each value constrained by its type/enum. Nested objects/arrays are out of scope
-    (an honest limit — they need a recursive grammar); scalar-field objects cover the common structured-output case."""
+def _object_regex(schema: dict, depth: int) -> str:
     props = schema.get("properties", {})
     required = schema.get("required") or list(props)
-    parts = [r'"' + _escape(key) + r'": ' + _value_regex(props.get(key, {})) for key in required]
+    if not required:
+        return r"\{\}"
+    parts = [r'"' + _escape(key) + r'": ' + _value_regex(props.get(key, {}), depth) for key in required]
     return r"\{" + ", ".join(parts) + r"\}"
 
 
-def json_schema_to_token_fsa(schema: dict, vocab: dict[int, str], *, eos_id: int | None = None) -> TokenFSA:
-    """Compile a flat JSON schema into a TokenFSA over ``vocab`` — in-decode masking that makes the output a valid,
-    schema-conforming JSON object by construction."""
-    return regex_to_token_fsa(json_schema_to_regex(schema), vocab, eos_id=eos_id)
+def json_schema_to_regex(schema: dict, *, max_depth: int = 3) -> str:
+    """Compile a JSON schema into a regex matching a canonical instance: ``{"k": v, ...}`` over the required (or
+    all) properties, each value constrained by type/enum. Nested objects + arrays recurse up to ``max_depth``
+    (an FSA is finite-state, so deeper-than-``max_depth`` nesting is out of scope — the honest limit)."""
+    return _object_regex(schema, max_depth)
+
+
+def json_schema_to_token_fsa(schema: dict, vocab: dict[int, str], *, eos_id: int | None = None,
+                             max_depth: int = 3) -> TokenFSA:
+    """Compile a JSON schema (nested objects/arrays up to ``max_depth``) into a TokenFSA over ``vocab`` — in-decode
+    masking that makes the output valid, schema-conforming JSON by construction."""
+    return regex_to_token_fsa(json_schema_to_regex(schema, max_depth=max_depth), vocab, eos_id=eos_id)
 
 
 def build_choice_fsa(choices: list[str], vocab: dict[int, str], *, eos_id: int | None = None) -> TokenFSA:
