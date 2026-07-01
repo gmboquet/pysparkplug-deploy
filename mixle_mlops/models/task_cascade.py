@@ -31,7 +31,7 @@ class TaskCascadeAdapter(ModelAdapter):
 
     kind = "mixle"  # a distilled mixle task model (ModelInfo.kind is constrained to llm|mixle|composite)
 
-    def __init__(self, name: str, model: Any) -> None:
+    def __init__(self, name: str, model: Any, *, extract_min_confidence: float = 0.5) -> None:
         # model is a TaskModel or a CalibratedTaskModel (duck-typed: needs .batch / .adapter; .decide if calibrated)
         self._name = name
         self._model = model
@@ -39,6 +39,8 @@ class TaskCascadeAdapter(ModelAdapter):
         self._task = model.task if self._calibrated else model
         self._labels = list(getattr(self._task.adapter, "labels", []))
         self._has_proba = hasattr(self._task.adapter, "proba_batch")  # classifiers yes, extractors no
+        self._is_extractor = hasattr(self._task.adapter, "predict_with_confidence")
+        self._extract_min_confidence = float(extract_min_confidence)
 
     @property
     def name(self) -> str:
@@ -116,6 +118,11 @@ class TaskCascadeAdapter(ModelAdapter):
         """Drive the cascade with the calibrated gate: answer locally when confident, else signal escalate."""
         last = next((m for m in reversed(req.messages) if m.role == "user"), None)
         record = self._parse_record(last.text().strip() if last else "")
+        if self._is_extractor:  # escalate an unfamiliar page: a missing field or low tag confidence
+            (extracted, conf) = self._task.adapter.predict_with_confidence(self._task.model, [record])[0]
+            missing = [f for f in self._task.adapter.fields if f not in extracted]
+            escalate = bool(missing) or conf < self._extract_min_confidence
+            return {"escalate": escalate, "answer": (None if escalate else _as_text(extracted)), "confidence": conf}
         if not self._calibrated:
             return {"escalate": False, "answer": _as_text(self._task(record)), "confidence": 1.0}
         s = self._model.predict_set(record)

@@ -164,6 +164,16 @@ def test_serve_extraction_model():
     assert out["results"][0].get("id") == "1055"
     assert "labels" not in out  # results are dicts, not labels
 
+    # the extractor drives the cascade too: a familiar line answers locally, a junk line escalates
+    from mixle_mlops.core.adapters import ChatMessage, ChatRequest
+
+    def sig(text):
+        req = ChatRequest(model="extract", messages=[ChatMessage(role="user", content=text)])
+        return asyncio.run(adapter.escalation_decision(req))
+
+    assert sig("INV-1055 paid $7.50 today")["escalate"] is False
+    assert sig("???? no fields here whatsoever ????")["escalate"] is True
+
 
 # --- unit level: the adapter directly, no gateway ---
 def test_adapter_plain_taskmodel_capabilities():
