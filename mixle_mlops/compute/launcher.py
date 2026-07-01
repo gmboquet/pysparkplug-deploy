@@ -7,7 +7,6 @@ a real instance and is gated behind dry_run=False (it needs your vast.ai key and
 from __future__ import annotations
 
 import json
-import os
 import shlex
 import subprocess
 import sys

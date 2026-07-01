@@ -20,7 +20,6 @@ from typing import Any
 
 from ..core.adapters import (
     ChatCompletion,
-    ChatCompletionChunk,
     ChatRequest,
     ModelAdapter,
     ModelInfo,
