@@ -83,6 +83,28 @@ def test_json_schema_fsa_produces_valid_json():
     assert "flag" in parsed and isinstance(parsed["flag"], bool)
 
 
+def test_json_schema_nested_and_array_regex():
+    nested = {"properties": {"a": {"type": "object", "properties": {"b": {"type": "boolean"}},
+                                   "required": ["b"]}}, "required": ["a"]}
+    assert json_schema_to_regex(nested) == r'\{"a": \{"b": (true|false)\}\}'
+    arr = {"properties": {"xs": {"type": "array", "items": {"type": "integer"}}}, "required": ["xs"]}
+    assert json_schema_to_regex(arr) == r'\{"xs": \[(-?\d+(, -?\d+)*)?\]\}'
+
+
+def test_nested_json_fsa_produces_valid_nested_json():
+    import json
+
+    schema = {"type": "object", "properties": {
+        "a": {"type": "object", "properties": {"b": {"type": "boolean"}}, "required": ["b"]}}, "required": ["a"]}
+    alphabet = '{}"ab: truefls'
+    vocab = _char_vocab(alphabet)
+    fsa = json_schema_to_token_fsa(schema, vocab)
+    out = decode(NgramProvider(np.zeros((len(alphabet), len(alphabet)))),
+                 prompt_ids=[0], max_new_tokens=40, grammar=fsa, greedy=True)
+    parsed = json.loads("".join(alphabet[t] for t in out))    # valid, schema-conforming NESTED json by construction
+    assert isinstance(parsed["a"], dict) and isinstance(parsed["a"]["b"], bool)
+
+
 def test_digit_class_matches_digits_only():
     chars = "0a"
     vocab = _char_vocab(chars)
