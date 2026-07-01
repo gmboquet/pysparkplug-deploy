@@ -6,6 +6,7 @@ One provider → a single local model. Several providers → a Product-of-Expert
 model with the bridge's logit-level levers turned on."""
 from __future__ import annotations
 
+import os
 from typing import Any, AsyncIterator
 
 from ..core.adapters import (
@@ -68,6 +69,15 @@ class LocalEngineAdapter(ModelAdapter):
                     eos.add(tok_id)
         return eos
 
+    def _seed(self, req: ChatRequest) -> int:
+        # decode() defaults to seed=0, so without a per-call seed every sampled generation is
+        # IDENTICAL (temperature has no effect). Honor an explicit request seed; otherwise draw a
+        # fresh one so temperature sampling is actually stochastic (needed for e.g. semantic-entropy UQ).
+        s = req.extra.get("seed")
+        if s is not None:
+            return int(s)
+        return int.from_bytes(os.urandom(4), "little")
+
     def _generate(self, req: ChatRequest) -> str:
         ids = self._prompt_ids(req)
         provs = self._providers if len(self._providers) > 1 else self._primary
@@ -78,7 +88,7 @@ class LocalEngineAdapter(ModelAdapter):
             provs, prompt_ids=ids, max_new_tokens=req.max_tokens or self.max_new_tokens,
             weights=self.weights, eos_id=first_eos,
             greedy=not req.temperature, temperature=req.temperature or 1.0, top_p=req.top_p or 1.0,
-            grammar=req.extra.get("_grammar"),
+            grammar=req.extra.get("_grammar"), seed=self._seed(req),
         )
         # Trim any trailing EOS tokens before decoding
         while out and out[-1] in eos_ids:
@@ -101,7 +111,8 @@ class LocalEngineAdapter(ModelAdapter):
         for tok_id in decode_iter(provs, prompt_ids=ids, max_new_tokens=req.max_tokens or self.max_new_tokens,
                                   weights=self.weights, eos_id=first_eos,
                                   greedy=not req.temperature, temperature=req.temperature or 1.0,
-                                  top_p=req.top_p or 1.0, grammar=req.extra.get("_grammar")):
+                                  top_p=req.top_p or 1.0, grammar=req.extra.get("_grammar"),
+                                  seed=self._seed(req)):
             if tok_id in eos_ids:
                 break
             emitted.append(tok_id)

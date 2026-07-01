@@ -14,6 +14,7 @@ from ..core.registry import ModelRegistry
 from ..image_gen import register_demo_image_model
 from ..models import EchoAdapter, OpenAICompatAdapter
 from ..models.mixle_model import register_demo_mixle_model
+from ..models.task_cascade import register_demo_task_model
 from ..storage.db import init_db
 from .routes import (
     accounts,
@@ -49,9 +50,9 @@ def build_registry(settings: Settings) -> ModelRegistry:
         except Exception:
             pass
     if settings.enable_demo_models:                             # demo models for /v1/mixle and /v1/images
-        for _register in (register_demo_mixle_model, register_demo_image_model):
+        for _register in (register_demo_mixle_model, register_demo_image_model, register_demo_task_model):
             try:
-                _register(registry)
+                _register(registry)                             # task demo needs torch; tolerated if absent
             except Exception:                                   # never let a demo registration break startup
                 pass
     if settings.image_model and settings.image_base_url:        # a real image backend, if configured

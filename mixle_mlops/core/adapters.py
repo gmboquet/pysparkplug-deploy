@@ -202,3 +202,11 @@ class ModelAdapter(ABC):
 
     async def latent(self, records: list[Any], **opts: Any) -> Any:
         raise CapabilityError(self.name, "latent")
+
+    async def escalation_decision(self, req: "ChatRequest") -> dict[str, Any] | None:
+        """A model that knows its own confidence can drive the cascade directly, instead of best-of-N voting.
+
+        Return ``{"escalate": bool, "answer": str | None, "confidence": float | None}`` to let the cascade router
+        use this model's *own* calibrated escalate signal (e.g. a conformal/density gate), or ``None`` to defer
+        to the generic self-consistency router. Default: ``None`` (no principled signal)."""
+        return None
